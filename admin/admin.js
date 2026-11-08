@@ -29,6 +29,9 @@
   const USER_DOMAIN = 'guapacha.invalid';
   const loginEmail = (u) => { const v = u.trim().toLowerCase(); return v.includes('@') ? v : `${v}@${USER_DOMAIN}`; };
   const shownLogin = (e) => (e ? e.replace('@' + USER_DOMAIN, '') : '');
+  const DOWL = ['domenica', 'lunedì', 'martedì', 'mercoledì', 'giovedì', 'venerdì', 'sabato'];
+  const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
+  const hourSelect = (id, val, from = 6, to = 24) => { const s = el('select', { id }); for (let h = from; h <= to; h++) s.append(el('option', { value: h, selected: h === val }, `${pad(h)}:00`)); return s; };
   const ROLE = { admin: 'Amministratore', segreteria: 'Segreteria', insegnante: 'Insegnante', allievo: 'Allievo', nessuno: 'Senza ruolo' };
 
   const S = { me: null, view: 'insights', days: 30, data: null, users: null, tab: 'tutte', q: '' };
@@ -147,10 +150,10 @@
   addEventListener('hashchange', () => S.me && route());
   function route() {
     const v = location.hash.slice(1) || 'insights';
-    S.view = ['insights', 'utenze'].includes(v) ? v : 'insights';
+    S.view = ['insights', 'utenze', 'sale', 'insegnanti'].includes(v) ? v : 'insights';
     document.querySelectorAll('.nav[data-view]').forEach((b) => b.setAttribute('aria-current', b.dataset.view === S.view ? 'page' : 'false'));
     tip.hidden = true;
-    (S.view === 'utenze' ? viewUsers : viewInsights)();
+    ({ utenze: viewUsers, sale: viewRooms, insegnanti: viewTeachers }[S.view] || viewInsights)();
   }
   const main = $('main');
   const loading = (t) => main.replaceChildren(el('div', 'toolbar', el('h1', null, t)), el('p', 'muted', 'Carico…'));
@@ -423,7 +426,7 @@
         if (role === 'insegnante') {
           const sel = el('select', { id: 'n-teacher' }, el('option', { value: 'new' }, '+ Nuovo insegnante'),
             S.users.teachers.map((t) => el('option', { value: t.id, disabled: !!t.login_email }, `${t.name}${t.style ? ' · ' + t.style : ''}${t.login_email ? ' (ha già un accesso)' : ''}`)));
-          const first = S.users.teachers.find((t) => !t.login_email); if (first) sel.value = String(first.id);
+          const first = preset.teacher_id ? S.users.teachers.find((t) => t.id === preset.teacher_id) : S.users.teachers.find((t) => !t.login_email); if (first) sel.value = String(first.id);
           const nt = el('div', { class: 'fields', id: 'n-newt' },
             field('Nome dell\'insegnante', el('input', { type: 'text', id: 'n-tname' })), field('Stile', el('input', { type: 'text', id: 'n-style', placeholder: 'es. Tango' })));
           const sync = () => (nt.hidden = sel.value !== 'new'); sel.onchange = sync; sync();
@@ -442,7 +445,7 @@
       try {
         const r = await admin(body);
         S.users = await rpc('sa_users');
-        S.tab = role === 'admin' ? 'admin' : role; S.q = ''; renderUsers();
+        if (preset.after) await preset.after(); else { S.tab = role === 'admin' ? 'admin' : role; S.q = ''; renderUsers(); }
         credentials(role, body, r);
       } catch (x) { err.textContent = x.message; save.disabled = false; }
     };
@@ -526,6 +529,105 @@
       catch (x) { err.textContent = x.message; save.disabled = false; }
     };
     openSheet(el('h3', null, 'Cambia la tua password'), form);
+  }
+
+  // ================================================================ SALE E ORARI
+  async function viewRooms() {
+    loading('Sale e orari');
+    let rooms, opening;
+    try { [rooms, { opening }] = await Promise.all([rpc('admin_rooms'), rpc('admin_settings')]); }
+    catch (x) { main.replaceChildren(el('h1', null, 'Sale e orari'), el('p', 'err', x.message)); return; }
+    const list = el('div', { style: 'display:flex;flex-direction:column;gap:10px' });
+    const roomRow = (r) => {
+      const id = r.id || 'new';
+      const n = el('input', { type: 'text', id: `rm-n-${id}`, value: r.name || '', placeholder: 'Nome della sala', required: true, style: 'width:170px' });
+      const i = el('input', { type: 'text', id: `rm-i-${id}`, value: r.info || '', placeholder: 'Descrizione (es. 80 mq, specchi, parquet)', style: 'flex:1;min-width:200px' });
+      const act = el('input', { type: 'checkbox', id: `rm-a-${id}`, checked: r.id ? !!r.active : true });
+      const save = el('button', { class: r.id ? 'btn' : 'btn primary', type: 'button' }, r.id ? 'Salva' : 'Aggiungi sala');
+      save.onclick = async () => {
+        save.disabled = true;
+        try { await rpc('admin_save_room', { p_id: r.id ?? null, p_name: n.value, p_info: i.value, p_active: act.checked }); toast(r.id ? 'Sala salvata' : 'Sala aggiunta'); viewRooms(); }
+        catch (x) { toast(x.message); save.disabled = false; }
+      };
+      return el('div', { class: 'shift', style: r.id && !r.active ? 'opacity:.6' : '' }, n, i, r.id ? el('label', 'check', act, 'Attiva') : null, save);
+    };
+    list.append(...rooms.map(roomRow));
+    const roomsCard = el('div', 'card', el('h2', null, 'Sale', el('small', null, `${rooms.filter((r) => r.active).length} attive`)),
+      el('div', 'muted small', 'Una sala disattivata sparisce dalle prenotazioni ma resta nello storico. Le lezioni già prenotate non vengono toccate.'),
+      list, el('div', 'label', 'Nuova sala'), roomRow({}));
+
+    const openRows = [1, 2, 3, 4, 5, 6, 0].map((w) => {
+      const o = opening.find((x) => x.weekday === w) || { weekday: w };
+      const on = el('input', { type: 'checkbox', id: `op-on-${w}`, checked: o.start_hour != null });
+      const a = hourSelect(`op-a-${w}`, o.start_hour ?? 15), z = hourSelect(`op-z-${w}`, o.end_hour ?? 22);
+      const sync = () => { a.disabled = z.disabled = !on.checked; }; on.onchange = sync; sync();
+      return { w, on, a, z, row: el('div', 'shift', el('label', { class: 'check', style: 'width:130px' }, on, cap(DOWL[w])), a, '–', z) };
+    });
+    const err = el('div', 'err');
+    const saveOpen = el('button', { class: 'btn primary', type: 'button' }, 'Salva orari');
+    saveOpen.onclick = async () => {
+      err.textContent = '';
+      const bad = openRows.find((r) => r.on.checked && Number(r.z.value) <= Number(r.a.value));
+      if (bad) { err.textContent = `${cap(DOWL[bad.w])}: l'ora di chiusura deve essere dopo l'apertura.`; return; }
+      saveOpen.disabled = true;
+      try {
+        await rpc('admin_save_settings', { p_settings: {}, p_opening: openRows.map((r) => ({ weekday: r.w, start_hour: r.on.checked ? Number(r.a.value) : null, end_hour: r.on.checked ? Number(r.z.value) : null })) });
+        toast('Orari salvati');
+      } catch (x) { err.textContent = x.message; }
+      saveOpen.disabled = false;
+    };
+    const openCard = el('div', 'card', el('h2', null, 'Orari di apertura della scuola'),
+      el('div', 'muted small', 'Le sale si possono prenotare solo in questi orari (a ore intere). Chiusure, festività e corsi collettivi si gestiscono in segreteria → Chiusure e corsi.'),
+      ...openRows.map((r) => r.row), err, el('div', 'row', saveOpen));
+    main.replaceChildren(el('div', 'toolbar', el('h1', null, 'Sale e orari')), roomsCard, openCard);
+  }
+
+  // ================================================================ INSEGNANTI
+  async function viewTeachers() {
+    loading('Insegnanti');
+    let teachers;
+    try { teachers = await rpc('admin_teachers'); } catch (x) { main.replaceChildren(el('h1', null, 'Insegnanti'), el('p', 'err', x.message)); return; }
+    const editor = (t) => {
+      const id = t.id || 'new';
+      const n = el('input', { type: 'text', id: `tc-n-${id}`, value: t.name || '', placeholder: 'Nome', style: 'width:150px' });
+      const st = el('input', { type: 'text', id: `tc-s-${id}`, value: t.style || '', placeholder: 'Stile (es. Tango)', style: 'width:170px' });
+      const col = el('input', { type: 'color', id: `tc-c-${id}`, value: t.color || '#6F5FCB', 'aria-label': 'Colore in agenda', style: 'width:44px;height:34px;padding:2px;border:1px solid var(--line);border-radius:8px;background:var(--surface)' });
+      const ph = el('input', { type: 'tel', id: `tc-p-${id}`, value: t.phone || '', placeholder: 'Telefono (facoltativo)', style: 'width:170px' });
+      const act = el('input', { type: 'checkbox', id: `tc-a-${id}`, checked: t.id ? !!t.active : true });
+      const shifts = (t.shifts || []).map((s) => ({ ...s }));
+      const sBox = el('div', 'shifts');
+      const renderShifts = () => sBox.replaceChildren(...shifts.map((s, idx) => {
+        const day = el('select', { 'aria-label': 'Giorno' }, ...[1, 2, 3, 4, 5, 6, 0].map((w) => el('option', { value: w, selected: w === s.weekday }, cap(DOWL[w]))));
+        const a = hourSelect(`sh-a-${id}-${idx}`, s.start_hour), z = hourSelect(`sh-z-${id}-${idx}`, s.end_hour);
+        day.onchange = () => (s.weekday = Number(day.value)); a.onchange = () => (s.start_hour = Number(a.value)); z.onchange = () => (s.end_hour = Number(z.value));
+        return el('div', 'shift', day, a, '–', z, el('button', { class: 'btn icon', type: 'button', 'aria-label': 'Rimuovi turno', onclick: () => { shifts.splice(idx, 1); renderShifts(); } }, '×'));
+      }), el('button', { class: 'btn', type: 'button', style: 'align-self:flex-start', onclick: () => { shifts.push({ weekday: 1, start_hour: 15, end_hour: 20 }); renderShifts(); } }, '+ Turno'));
+      renderShifts();
+      const save = el('button', { class: 'btn primary', type: 'button' }, t.id ? 'Salva' : 'Aggiungi insegnante');
+      save.onclick = async () => {
+        const bad = shifts.find((s) => s.end_hour <= s.start_hour);
+        if (bad) { toast(`Turno di ${DOWL[bad.weekday]}: l'ora di fine deve essere dopo l'inizio.`); return; }
+        save.disabled = true;
+        try {
+          await rpc('admin_save_teacher', { p_id: t.id ?? null, p_name: n.value, p_style: st.value, p_color: col.value, p_phone: ph.value, p_active: act.checked, p_shifts: shifts });
+          toast(t.id ? 'Insegnante salvato' : 'Insegnante aggiunto'); viewTeachers();
+        } catch (x) { toast(x.message); save.disabled = false; }
+      };
+      const hours = shifts.reduce((s, x) => s + (x.end_hour - x.start_hour), 0);
+      const access = !t.id ? null : el('div', 'shift',
+        el('span', 'label', 'Accesso all\'agenda'),
+        t.login_email ? el('span', 'pill ok', shownLogin(t.login_email)) : el('span', 'muted small', 'nessuno'),
+        t.login_email ? el('a', { class: 'btn', href: '#utenze' }, 'Gestisci in Utenze') : el('button', { class: 'btn', type: 'button', onclick: async () => {
+          if (!S.users) S.users = await rpc('sa_users');
+          newUser({ role: 'insegnante', teacher_id: t.id, after: async () => { S.users = await rpc('sa_users'); viewTeachers(); } });
+        } }, 'Crea accesso'));
+      return el('div', { class: 'card', style: t.id && !t.active ? 'opacity:.7' : '' },
+        el('div', 'shift', col, n, st, ph, el('label', 'check', act, 'Attivo')),
+        el('div', 'label', t.id ? `Turni settimanali · ${hours} ore` : 'Turni settimanali'), sBox, access, el('div', 'row', save));
+    };
+    main.replaceChildren(el('div', 'toolbar', el('h1', null, 'Insegnanti'), el('span', 'grow'), el('span', 'muted small', 'Il colore è quello usato in agenda; i turni decidono quando l\'insegnante è prenotabile.')),
+      ...teachers.map(editor),
+      el('details', null, el('summary', { class: 'btn primary', style: 'display:inline-flex' }, '+ Nuovo insegnante'), el('div', { style: 'margin-top:10px' }, editor({ shifts: [] }))));
   }
 
   // ---------------- avvio ----------------
