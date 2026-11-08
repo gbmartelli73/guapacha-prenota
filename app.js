@@ -450,19 +450,29 @@
     const links = calLinks(b);
     // link HTTPS al file .ics: funziona anche su iPhone e dall'app installata; senza token si genera il file nel browser
     const token = b.ics_token || S.mine.upcoming.find((x) => x.id === b.id)?.ics_token;
-    let ics;
+    const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+    const url = token ? `${C.supabaseUrl}/functions/v1/ics?b=${b.id}&t=${token}` : '';
+    let ics, hint = '';
     if (token) {
-      ics = el('a', 'btn primary block', 'Calendario del telefono o Outlook (con avviso)');
-      ics.href = `${C.supabaseUrl}/functions/v1/ics?b=${b.id}&t=${token}`; ics.target = '_blank'; ics.rel = 'noopener';
-    } else { ics = el('button', 'btn primary block', 'Calendario del telefono o Outlook (con avviso)'); ics.type = 'button'; ics.onclick = () => downloadIcs(b); }
+      // il file .ics contiene orario, indirizzo e avviso; sull'iPhone va aperto in Safari (dall'app installata iOS non lo importa)
+      ics = el('a', 'btn primary block', isIOS ? 'Aggiungi al calendario dell\'iPhone' : 'Aggiungi al calendario (con avviso)');
+      ics.href = isIOS && standalone ? `x-safari-${url}` : url; ics.target = '_blank'; ics.rel = 'noopener';
+      hint = isIOS ? 'Si apre Safari con l\'anteprima della lezione: tocca «Aggiungi al calendario» (o «Aggiungi tutto») e scegli il calendario, anche quello di Outlook.' : 'Si scarica il file della lezione: aprilo e scegli il calendario.';
+    } else { ics = el('button', 'btn primary block', 'Aggiungi al calendario (con avviso)'); ics.type = 'button'; ics.onclick = () => downloadIcs(b); }
     const mk = (href, txt) => { const a = el('a', 'btn block', txt); a.href = href; a.target = '_blank'; a.rel = 'noopener'; return a; };
+    const copy = url ? el('button', 'btn block', 'Copia il link della lezione') : null;
+    if (copy) { copy.type = 'button'; copy.onclick = async () => { try { await navigator.clipboard.writeText(url); toast('Link copiato: incollalo in Safari o mandalo per email'); } catch { prompt('Copia questo link', url); } }; }
     const close = el('button', 'btn block', 'Chiudi'); close.type = 'button'; close.onclick = closeSheet;
     const x = lessonText(b);
     openSheet([head(title, `${cap(fmtDay(b.date))} · ${x.details.split('\n')[0]}`),
       ...(guestNames(b.guests) ? [el('div', null, `Partecipa anche: ${guestNames(b.guests)}`)] : []),
-      ics, el('div', 'muted small', alarm > 0 ? `Il calendario ti avvisa ${when} prima.` : ''),
+      ...(S.cfg.school_address ? [el('div', 'muted small', `📍 ${S.cfg.school}, ${S.cfg.school_address}`)] : []),
+      ics, el('div', 'muted small', [alarm > 0 ? `Con avviso ${when} prima e indirizzo della scuola.` : '', hint].filter(Boolean).join(' ')),
+      ...(copy ? [copy] : []),
+      el('div', 'label', 'Altri calendari (l\'avviso va impostato a mano)'),
       mk(links.google, 'Google Calendar'), mk(links.outlook, 'Outlook sul web'),
-      ...(S.cfg.school_address ? [el('div', 'muted small', `📍 ${S.cfg.school_address}`), mk(mapsUrl(), 'Indicazioni per arrivare')] : []), close]);
+      ...(S.cfg.school_address ? [mk(mapsUrl(), 'Indicazioni per arrivare')] : []), close]);
   }
   function bookedSheet(b) { calendarSheet(b, 'Prenotato!'); }
 
