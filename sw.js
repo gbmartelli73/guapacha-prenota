@@ -1,9 +1,10 @@
 // Service worker: apre l'app anche con rete lenta; i dati (/api) arrivano sempre dal server.
-const CACHE = 'prenota-v3.4.0';
+const VERSION = '3.5.0'; // uguale a version.js
+const CACHE = 'prenota-v' + VERSION;
 // configurazione Supabase (stesso file dell'app) per segnalare la ricezione delle notifiche
 try { self.window = self; importScripts('config.js'); } catch { /* facoltativo */ }
 // percorsi relativi: l'app funziona anche in una sottocartella (es. GitHub Pages)
-const SHELL = ['./', 'style.css', 'app.js', 'config.js', 'vendor/supabase.js', 'vendor/qrcode.js', 'manifest.webmanifest', 'icons/icon-192.png', 'logo.svg', 'thinkdifferent.svg'];
+const SHELL = ['./', 'style.css', 'app.js', 'config.js', 'version.js', 'vendor/supabase.js', 'vendor/qrcode.js', 'manifest.webmanifest', 'icons/icon-192.png', 'logo.svg', 'thinkdifferent.svg'];
 const HOME = new URL('./', self.location).href;
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {

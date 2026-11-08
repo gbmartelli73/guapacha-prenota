@@ -500,6 +500,33 @@
     if (m && m[1] >= S.cfg.today) { setTab('prenota'); S.sel = m[1]; S.week = monday(m[1]); await refresh(); }
     const c = /^conferma=(\d+)$/.exec(h);
     if (c) { history.replaceState(null, '', location.pathname + '#lezioni'); setTab('lezioni'); confirmSheet(Number(c[1])); }
+    const w = /^attesa=(\d+)$/.exec(h);
+    if (w) { history.replaceState(null, '', location.pathname + '#lezioni'); setTab('lezioni'); waitSheet(Number(w[1])); }
+  }
+
+  // dalla notifica "si è liberato un posto": prenota in un tocco
+  async function waitSheet(id) {
+    if (!S.me) { const ok = await loginFlow(); if (!ok) return; }
+    await refresh({ week: false, day: false });
+    const w = S.waits.find((x) => x.id === id);
+    if (!w) { toast('Questa richiesta non è più attiva'); return; }
+    const what = `${cap(fmtDay(w.date))} alle ${pad(w.hour)}:00${w.teacher ? ' con ' + w.teacher : ''}${w.note ? ' · ' + w.note : ''}`;
+    const err = el('div', 'err');
+    const go = el('button', 'btn primary block', 'Prenota questo posto'); go.type = 'button';
+    go.onclick = async () => {
+      go.disabled = true; go.textContent = 'Prenoto…'; err.textContent = '';
+      try {
+        const r = await rpc('waitlist_book', { p_id: w.id });
+        await refresh();
+        bookedSheet({ id: r.id, date: r.date, hour: r.hour, room_name: r.room, teacher_name: r.teacher, note: w.note || '' });
+      } catch (x) { err.textContent = x.message; go.disabled = false; go.textContent = 'Riprova'; refresh({ week: false, day: false }); }
+    };
+    const no = el('button', 'btn block', 'Non mi serve più (esci dalla lista)'); no.type = 'button';
+    no.onclick = async () => { no.disabled = true; try { await rpc('waitlist_leave', { p_id: w.id }); closeSheet(); toast('Sei uscito dalla lista d\'attesa'); await refresh({ week: false, day: false }); } catch (x) { toast(x.message); no.disabled = false; } };
+    const later = el('button', 'btn block', 'Ci penso, resto in lista'); later.type = 'button'; later.onclick = () => closeSheet();
+    openSheet([head(w.free_now ? 'Si è liberato un posto!' : 'Lista d\'attesa', what),
+      el('div', null, w.free_now ? 'Il primo che prenota lo prende: confermi?' : 'Al momento il posto risulta occupato. Puoi provare comunque o restare in lista.'),
+      err, go, later, no]);
   }
 
   // dalla notifica del promemoria: conferma, sposta o annulla in un tocco
@@ -571,7 +598,7 @@
       what.append(el('b', null, w.teacher ? `In attesa con ${w.teacher}` : 'In attesa · qualsiasi insegnante'),
         el('span', null, w.free_now ? 'Si è liberato un posto: prenota ora!' : w.status === 'avvisato' ? 'Ti abbiamo avvisato: il posto potrebbe essere già stato preso' : 'Ti avvisiamo se si libera'));
       const acts = el('div', 'acts');
-      if (w.free_now) { const g = el('button', 'btn primary', 'Prenota'); g.type = 'button'; g.onclick = async () => { setTab('prenota'); S.sel = w.date; S.week = monday(w.date); await refresh(); }; acts.append(g); }
+      if (w.free_now) { const g = el('button', 'btn primary', 'Prenota'); g.type = 'button'; g.onclick = () => waitSheet(w.id); acts.append(g); }
       const x = el('button', 'btn', 'Esci'); x.type = 'button';
       x.onclick = async () => { x.disabled = true; try { await rpc('waitlist_leave', { p_id: w.id }); toast('Sei uscito dalla lista d\'attesa'); await refresh({ week: false, day: false }); } catch (e) { toast(e.message); x.disabled = false; } };
       acts.append(x); row.append(when, what, acts); box.append(row);
@@ -794,6 +821,12 @@
     const x = el('button', 'btn', 'Ok'); x.type = 'button'; x.onclick = () => { $('install').hidden = true; try { localStorage.setItem('install-dismissed', '1'); } catch {} };
     $('install').append(x);
   }
+  const ver = $('appver'); if (ver) ver.textContent = `Versione ${self.APP_VERSION || ''}`;
+  try {
+    const seen = localStorage.getItem('appver');
+    if (seen && self.APP_VERSION && seen !== self.APP_VERSION) setTimeout(() => toast(`App aggiornata alla versione ${self.APP_VERSION}`), 800);
+    if (self.APP_VERSION) localStorage.setItem('appver', self.APP_VERSION);
+  } catch { /* facoltativo */ }
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').then((r) => r.update()).catch(() => {});
     // notifica arrivata mentre l'app è aperta: la mostriamo anche dentro l'app

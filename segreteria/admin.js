@@ -1025,3 +1025,6 @@
 
   boot().catch(() => showLogin());
 })();
+
+// versione dell'app nella barra laterale
+try { const v = document.getElementById('appver'); if (v && self.APP_VERSION) v.textContent = 'Versione ' + self.APP_VERSION; } catch { /* facoltativo */ }
