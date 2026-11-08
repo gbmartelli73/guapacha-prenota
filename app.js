@@ -14,7 +14,8 @@
   const fmtDay = (k) => { const d = parse(k); return `${DOWL[d.getDay()]} ${d.getDate()} ${MON[d.getMonth()]}`; };
   const cap = (s) => s.charAt(0).toUpperCase() + s.slice(1);
 
-  const S = { cfg: null, me: null, week: null, sel: null, filter: null, day: null, weekSum: [], mine: { upcoming: [], past: [] }, tab: 'prenota' };
+  const S = { cfg: null, me: null, week: null, sel: null, filter: null, day: null, weekSum: [], mine: { upcoming: [], past: [] }, tab: 'prenota',
+    waits: [], card: null, moving: null };
   const T = () => Object.fromEntries(S.cfg.teachers.map((t) => [t.id, t]));
   const R = () => Object.fromEntries(S.cfg.rooms.map((r) => [r.id, r]));
 
@@ -64,9 +65,9 @@
   async function loadWeek() { S.weekSum = await rpc('public_week', { p_start: S.week }); }
   async function loadDay() { S.day = await rpc('public_day', { p_date: S.sel }); }
   async function loadMine() {
-    if (!S.me) { S.mine = { upcoming: [], past: [] }; return; }
-    try { S.mine = await rpc('my_bookings'); }
-    catch (e) { if (e.auth) { await sb.auth.signOut().catch(() => {}); S.me = null; S.mine = { upcoming: [], past: [] }; } else throw e; }
+    if (!S.me) { S.mine = { upcoming: [], past: [] }; S.waits = []; S.card = null; return; }
+    try { [S.mine, S.waits, S.card] = await Promise.all([rpc('my_bookings'), rpc('my_waitlist'), rpc('my_card')]); }
+    catch (e) { if (e.auth) { await sb.auth.signOut().catch(() => {}); S.me = null; S.mine = { upcoming: [], past: [] }; S.waits = []; S.card = null; } else throw e; }
   }
   async function refresh({ week = true, day = true, mine = true } = {}) {
     try {
@@ -138,9 +139,10 @@
             b.onclick = () => openMine(c, r, t);
             b.setAttribute('aria-label', `${label}: la tua lezione con ${t ? t.name : ''}`);
           } else {
-            b.classList.add('taken'); b.disabled = true; b.append(el('span', 'st', 'Occupata'), el('span', 'sm', t ? t.name : ''));
-            b.setAttribute('aria-label', `${label}: occupata`);
+            b.classList.add('taken'); b.append(el('span', 'st', 'Occupata'), el('span', 'sm', t ? t.name : ''));
+            b.setAttribute('aria-label', `${label}: occupata, tocca per la lista d'attesa`);
             if (S.filter) b.classList.add('dim');
+            if (c.status === 'booked' && !S.moving && g.date >= S.cfg.today) b.onclick = () => openWaitlist(h, c); else b.disabled = true;
           }
         } else if (c.status === 'blocked') {
           b.classList.add('blocked'); b.disabled = true; b.append(el('span', 'st', c.title || 'Non disponibile'));
@@ -152,7 +154,7 @@
           b.append(el('span', 'st', 'Libera'), dots);
           b.setAttribute('aria-label', `${label}: libera, con ${c.teachers.map((id) => tmap[id]?.name).join(', ')}`);
           if (S.filter && !c.teachers.includes(S.filter)) b.classList.add('dim');
-          b.onclick = () => openBooking(c, r);
+          b.onclick = () => (S.moving ? confirmMove(c, r) : openBooking(c, r));
         } else {
           b.classList.add('off'); b.disabled = true; b.append(el('span', 'st', c.status === 'past' ? 'Passata' : '—'));
           b.setAttribute('aria-label', `${label}: non prenotabile`);
@@ -175,7 +177,16 @@
     row.append(when, what);
     if (!past) {
       const cal = el('button', 'btn', 'Calendario'); cal.type = 'button'; cal.onclick = () => calendarSheet(b);
-      const acts = el('div', 'acts'); acts.append(cal, cancelButton(b)); row.append(acts);
+      const mv = el('button', 'btn', 'Sposta'); mv.type = 'button'; mv.onclick = () => startMove(b);
+      const acts = el('div', 'acts'); acts.append(cal, mv, cancelButton(b)); row.append(acts);
+      if (b.confirmed) what.append(el('span', 'ok-chip', '✓ Presenza confermata'));
+      else {
+        const cf = el('button', 'chip-btn', 'Conferma presenza'); cf.type = 'button';
+        cf.onclick = async () => { cf.disabled = true; try { await rpc('confirm_my_booking', { p_id: b.id }); toast('Presenza confermata, grazie!'); await refresh({ week: false, day: false }); } catch (x) { toast(x.message); cf.disabled = false; } };
+        what.append(cf);
+      }
+    } else if (b.status === 'confermata' && b.attendance !== 'assente' && S.card) {
+      what.append(el('span', 'pts', `+${S.card.points.per_lesson} punti`));
     }
     return row;
   }
@@ -193,6 +204,7 @@
       c.append(b); up.append(c);
     }
     for (const b of S.mine.upcoming) up.append(lessonRow(b));
+    renderWaits();
     $('pastbox').hidden = !S.mine.past.length;
     const p = $('past'); p.replaceChildren(); for (const b of S.mine.past) p.append(lessonRow(b, { past: true }));
   }
@@ -232,6 +244,7 @@
       out.onclick = async () => { await sb.auth.signOut().catch(() => {}); S.me = null; S.mine = { upcoming: [], past: [] }; await refresh(); setTab('prenota'); toast('Sei uscito'); };
       box.append(c);
     }
+    renderNotify();
     const ct = $('contact'); ct.replaceChildren();
     const lines = [];
     const waNum = String(S.cfg.whatsapp_number || '').replace(/\D/g, '');
@@ -246,11 +259,11 @@
     }
   }
 
-  function renderAll() { renderAccount(); renderWeek(); renderBoard(); renderMine(); renderProfile(); }
+  function renderAll() { renderAccount(); renderWeek(); renderBoard(); renderMine(); renderProfile(); renderWallet(); renderMoving(); }
 
   function setTab(tab) {
     S.tab = tab;
-    for (const v of ['prenota', 'lezioni', 'profilo']) $(`view-${v}`).hidden = v !== tab;
+    for (const v of ['prenota', 'lezioni', 'tessera', 'profilo']) $(`view-${v}`).hidden = v !== tab;
     document.querySelectorAll('.tab').forEach((b) => { if (b.dataset.tab === tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
     window.scrollTo({ top: 0 });
   }
@@ -476,6 +489,242 @@
   }
   function bookedSheet(b) { calendarSheet(b, 'Prenotato!'); }
 
+  // ---------------- percorsi dalle notifiche: #lezioni, #tessera, #giorno=AAAA-MM-GG ----------------
+  async function route() {
+    const h = location.hash.slice(1);
+    if (['lezioni', 'profilo', 'tessera'].includes(h)) setTab(h);
+    const m = /^giorno=(\d{4}-\d{2}-\d{2})$/.exec(h);
+    if (m && m[1] >= S.cfg.today) { setTab('prenota'); S.sel = m[1]; S.week = monday(m[1]); await refresh(); }
+  }
+
+  // ---------------- lista d'attesa ----------------
+  async function openWaitlist(hour, cell) {
+    if (!S.me) { const ok = await loginFlow(); if (!ok) return; }
+    const tmap = T();
+    const busy = S.day.cells.filter((x) => x.hour === hour);
+    const anyFree = busy.some((x) => x.status === 'free');
+    const sel = el('select'); sel.id = 'w-teacher';
+    sel.append(new Option('Qualsiasi insegnante', ''));
+    for (const t of S.cfg.teachers) sel.append(new Option(`${t.name} · ${t.style}`, t.id));
+    sel.value = cell.teacher_id ? String(cell.teacher_id) : '';
+    const f = el('div', 'field'); const l = el('label', null, 'Con chi vorresti fare lezione?'); l.htmlFor = 'w-teacher'; f.append(l, sel);
+    const err = el('div', 'err');
+    const b = el('button', 'btn primary block', 'Avvisami se si libera'); b.type = 'button';
+    b.onclick = async () => {
+      b.disabled = true; err.textContent = '';
+      try {
+        await rpc('waitlist_join', { p_date: S.sel, p_hour: hour, p_teacher_id: sel.value ? Number(sel.value) : null });
+        closeSheet(); toast('Sei in lista d\'attesa: ti avvisiamo appena si libera');
+        await refresh({ week: false, day: false });
+        if (!S.me.push && pushSupported()) setTimeout(() => offerPush('Per essere avvisato subito, attiva le notifiche sul telefono.'), 400);
+      } catch (x) { err.textContent = x.message; b.disabled = false; }
+    };
+    const how = [S.me.wa_consent && 'WhatsApp', 'notifica sul telefono'].filter(Boolean).join(' e ');
+    openSheet([head('Lista d\'attesa', `${cap(fmtDay(S.sel))} · ${pad(hour)}:00${anyFree ? ' · ci sono ancora sale libere a quest\'ora' : ''}`),
+      el('div', null, `Questa sala è occupata. Se qualcuno annulla, ti avvisiamo con ${how} e potrai prenotare per primo.`),
+      ...(anyFree ? [el('div', 'muted small', 'Se ti va bene un altro insegnante, a quest\'ora ci sono ancora sale libere: puoi prenotare subito.')] : []),
+      f, err, b]);
+  }
+  function renderWaits() {
+    const box = $('waitlist'); box.replaceChildren();
+    $('waitbox').hidden = !S.waits.length;
+    for (const w of S.waits) {
+      const d = parse(w.date);
+      const row = el('div', 'bk');
+      const when = el('div', 'when'); when.append(el('b', null, `${DOW[d.getDay()]} ${d.getDate()}`), el('span', null, `${MON[d.getMonth()]} · ${pad(w.hour)}:00`));
+      const what = el('div', 'what');
+      what.append(el('b', null, w.teacher ? `In attesa con ${w.teacher}` : 'In attesa · qualsiasi insegnante'),
+        el('span', null, w.free_now ? 'Si è liberato un posto: prenota ora!' : w.status === 'avvisato' ? 'Ti abbiamo avvisato: il posto potrebbe essere già stato preso' : 'Ti avvisiamo se si libera'));
+      const acts = el('div', 'acts');
+      if (w.free_now) { const g = el('button', 'btn primary', 'Prenota'); g.type = 'button'; g.onclick = async () => { setTab('prenota'); S.sel = w.date; S.week = monday(w.date); await refresh(); }; acts.append(g); }
+      const x = el('button', 'btn', 'Esci'); x.type = 'button';
+      x.onclick = async () => { x.disabled = true; try { await rpc('waitlist_leave', { p_id: w.id }); toast('Sei uscito dalla lista d\'attesa'); await refresh({ week: false, day: false }); } catch (e) { toast(e.message); x.disabled = false; } };
+      acts.append(x); row.append(when, what, acts); box.append(row);
+    }
+  }
+
+  // ---------------- spostare una lezione ----------------
+  function startMove(b) {
+    S.moving = b; setTab('prenota'); S.sel = b.date; S.week = monday(b.date);
+    refresh({ mine: false });
+    toast('Scegli una casella libera per il nuovo orario');
+  }
+  function renderMoving() {
+    const bar = $('moving'); bar.replaceChildren(); bar.hidden = !S.moving;
+    if (!S.moving) return;
+    const b = S.moving;
+    bar.append(el('span', null, `Stai spostando la lezione di ${fmtDay(b.date)} alle ${hm(b)} con ${b.teacher_name}: tocca una casella libera.`));
+    const x = el('button', 'btn', 'Annulla'); x.type = 'button'; x.onclick = () => { S.moving = null; renderAll(); };
+    bar.append(x);
+  }
+  function confirmMove(cell, room) {
+    const b = S.moving, tmap = T();
+    const ids = cell.teachers.includes(b.teacher_id) ? [b.teacher_id, ...cell.teachers.filter((i) => i !== b.teacher_id)] : cell.teachers;
+    const opts = el('div', 'opts');
+    ids.forEach((id, i) => {
+      const t = tmap[id]; const o = el('label', 'opt');
+      const r = el('input'); r.type = 'radio'; r.name = 'mvt'; r.value = id; r.checked = i === 0;
+      const dot = el('i', 'dot'); dot.style.setProperty('--tc', t.color);
+      const n = el('span'); n.append(el('b', null, t.name), document.createTextNode(` · ${t.style}`)); o.append(r, dot, n); opts.append(o);
+    });
+    const err = el('div', 'err');
+    const go = el('button', 'btn primary block', 'Sposta qui'); go.type = 'button';
+    go.onclick = async () => {
+      go.disabled = true; err.textContent = '';
+      try {
+        const t = Number(sheet.querySelector('input[name="mvt"]:checked').value);
+        const r = await rpc('move_my_booking', { p_id: b.id, p_date: S.sel, p_hour: cell.hour, p_room_id: room.id, p_teacher_id: t });
+        S.moving = null; closeSheet(); toast(`Lezione spostata a ${fmtDay(r.date)} alle ${pad(r.hour)}:00 · ${r.room}`);
+        await refresh(); setTab('lezioni');
+      } catch (x) { err.textContent = x.message; go.disabled = false; }
+    };
+    openSheet([head('Sposta la lezione', `Da ${fmtDay(b.date)} ${hm(b)} → ${fmtDay(S.sel)} ${pad(cell.hour)}:00 · ${room.name}`),
+      el('div', 'label', 'Insegnante'), opts, err, go,
+      el('div', 'muted small', `Si può spostare fino a ${S.cfg.cancel_hours} ore prima della lezione.`)]);
+  }
+
+  // ---------------- tessera (wallet) ----------------
+  const fmtDate = (k) => k ? k.split('-').reverse().join('/') : '—';
+  function qrSvg(text) {
+    try { const q = window.qrcode(0, 'M'); q.addData(text); q.make(); return q.createSvgTag({ cellSize: 4, margin: 0, scalable: true }); } catch { return ''; }
+  }
+  function renderWallet() {
+    const box = $('wallet'); box.replaceChildren();
+    if (!S.me) {
+      const c = el('div', 'empty'); c.append(el('div', null, 'Accedi per vedere la tua tessera, i punti e le lezioni svolte.'));
+      const b = el('button', 'btn primary', 'Accedi'); b.type = 'button'; b.style.marginTop = '10px'; b.onclick = () => loginFlow(); c.append(b); box.append(c); return;
+    }
+    const k = S.card; if (!k) { box.append(el('div', 'closed', 'Caricamento…')); return; }
+    const card = el('div', 'mcard ' + k.status);
+    const top = el('div', 'mtop'); const logo = el('img'); logo.src = 'logo.svg'; logo.alt = ''; logo.width = 40; logo.height = 40;
+    const tt = el('div'); tt.append(el('b', null, k.school), el('span', null, 'Tessera associativa'));
+    top.append(logo, tt);
+    const st = el('span', 'mstatus', k.status === 'attiva' ? 'Attiva' : k.status === 'scaduta' ? 'Scaduta' : 'Da attivare');
+    top.append(st);
+    const mid = el('div', 'mmid');
+    const info = el('div', 'minfo');
+    info.append(el('div', 'mname', k.name || 'Allievo'), el('div', 'mno', k.member_no),
+      el('div', 'mval', k.member_until ? `Valida fino al ${fmtDate(k.member_until)}` : 'In attesa di attivazione in segreteria'));
+    const qr = el('div', 'mqr'); qr.innerHTML = qrSvg(`${new URL('segreteria/', location.href).href}#allievi?q=${encodeURIComponent(k.member_no)}`);
+    mid.append(info, qr);
+    card.append(top, mid);
+    // punti
+    const p = k.points, reward = p.reward || 100, have = Math.max(0, p.total), toNext = reward - (have % reward || 0);
+    const pc = el('div', 'card points');
+    const big = el('div', 'pbig'); big.append(el('b', null, String(have)), el('span', null, 'punti'));
+    const bar = el('div', 'pbar'); const fill = el('i'); fill.style.width = `${Math.min(100, (have / reward) * 100)}%`; bar.append(fill);
+    pc.append(big, bar,
+      el('div', 'muted small', have >= reward ? `Hai diritto a: ${p.reward_label || 'un premio'}! Chiedilo in segreteria.` : `Ancora ${toNext} punti per: ${p.reward_label || 'un premio'}.`),
+      el('div', 'pstats', `${p.lessons_done} lezioni svolte · ${p.per_lesson} punti a lezione${p.redeemed ? ` · ${p.redeemed} punti già usati` : ''}`));
+    // anagrafica
+    const ana = el('form', 'card');
+    ana.append(el('div', 'label', 'Dati per l\'iscrizione'));
+    const mk = (id, label, type, val, extra = {}) => { const f = el('div', 'field'); const l = el('label', null, label); l.htmlFor = id; const i = el('input'); i.type = type; i.id = id; i.value = val || ''; Object.assign(i, extra); f.append(l, i); ana.append(f); return i; };
+    const ib = mk('k-birth', 'Data di nascita', 'date', k.birth_date, { max: S.cfg.today });
+    const ic = mk('k-cf', 'Codice fiscale', 'text', k.tax_code, { maxLength: 16, autocapitalize: 'characters' });
+    const ia = mk('k-addr', 'Indirizzo', 'text', k.address, { autocomplete: 'street-address' });
+    const meta = el('div', 'muted small', `Iscritto dal ${fmtDate(k.member_since)}${k.medical_until ? ` · certificato medico valido fino al ${fmtDate(k.medical_until)}` : ''}`);
+    const err = el('div', 'err'); const save = el('button', 'btn primary', 'Salva'); save.type = 'submit';
+    const row = el('div', 'row'); row.append(save); ana.append(meta, err, row);
+    ana.onsubmit = async (e) => {
+      e.preventDefault(); err.textContent = ''; save.disabled = true;
+      try { S.card = await rpc('me_save_profile', { p_data: { birth_date: ib.value, tax_code: ic.value, address: ia.value } }); toast('Dati salvati'); renderWallet(); }
+      catch (x) { err.textContent = x.message; } finally { save.disabled = false; }
+    };
+    box.append(card, el('div', 'muted small center', 'Mostra il codice in segreteria per farti riconoscere.'), pc, ana);
+  }
+
+  // ---------------- notifiche push ----------------
+  const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window && !!S.cfg?.vapid_public;
+  const b64uToBytes = (s) => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
+  async function enablePush() {
+    if (!pushSupported()) throw new Error(/iphone|ipad|ipod/i.test(navigator.userAgent) && !standalone
+      ? 'Sull\'iPhone le notifiche funzionano con l\'app installata: tocca Condividi → "Aggiungi alla schermata Home", aprila da lì e riprova.'
+      : 'Questo browser non supporta le notifiche.');
+    const perm = await Notification.requestPermission();
+    if (perm !== 'granted') throw new Error('Notifiche non consentite. Puoi attivarle dalle impostazioni del telefono.');
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64uToBytes(S.cfg.vapid_public) });
+    const j = sub.toJSON();
+    await rpc('push_subscribe', { p_endpoint: j.endpoint, p_p256dh: j.keys.p256dh, p_auth: j.keys.auth, p_ua: navigator.userAgent.slice(0, 300) });
+    S.me.push = true;
+  }
+  async function disablePush() {
+    const reg = await navigator.serviceWorker.ready; const sub = await reg.pushManager.getSubscription();
+    if (sub) { await rpc('push_unsubscribe', { p_endpoint: sub.endpoint }).catch(() => {}); await sub.unsubscribe().catch(() => {}); }
+    S.me.push = false;
+  }
+  function offerPush(msg) {
+    const b = el('button', 'btn primary block', 'Attiva le notifiche'); b.type = 'button';
+    const err = el('div', 'err');
+    b.onclick = async () => { b.disabled = true; try { await enablePush(); closeSheet(); toast('Notifiche attivate'); renderNotify(); } catch (x) { err.textContent = x.message; b.disabled = false; } };
+    const no = el('button', 'btn block', 'Non ora'); no.type = 'button'; no.onclick = closeSheet;
+    openSheet([head('Notifiche sul telefono', msg), err, b, no]);
+  }
+  function renderNotify() {
+    const box = $('notify'); box.replaceChildren(); box.hidden = !S.me;
+    if (!S.me) return;
+    box.append(el('b', null, 'Notifiche sul telefono'),
+      el('div', 'muted small', 'Promemoria prima della lezione, posti liberati dalla lista d\'attesa e cambi d\'orario, anche ad app chiusa.'));
+    const err = el('div', 'err');
+    const row = el('div', 'row');
+    if (S.me.push) {
+      const t = el('button', 'btn primary', 'Invia una notifica di prova'); t.type = 'button';
+      t.onclick = async () => { t.disabled = true; err.textContent = ''; try { await rpc('push_test'); toast('Inviata: arriva tra pochi secondi'); } catch (x) { err.textContent = x.message; } finally { setTimeout(() => (t.disabled = false), 3000); } };
+      const off = el('button', 'btn', 'Disattiva'); off.type = 'button';
+      off.onclick = async () => { await disablePush(); toast('Notifiche disattivate'); renderNotify(); };
+      row.append(off, t);
+      box.append(el('div', 'ok-chip', '✓ Attive su questo telefono'));
+    } else {
+      const on = el('button', 'btn primary', 'Attiva le notifiche'); on.type = 'button';
+      on.onclick = async () => { on.disabled = true; err.textContent = ''; try { await enablePush(); toast('Notifiche attivate'); renderNotify(); } catch (x) { err.textContent = x.message; on.disabled = false; } };
+      row.append(on);
+    }
+    box.append(err, row);
+  }
+
+  // ---------------- assistente (chat) ----------------
+  const chat = { msgs: null, busy: false };
+  async function openChat() {
+    if (!S.me) { const ok = await loginFlow(); if (!ok) return; }
+    const list = el('div', 'chatlog'); list.id = 'chatlog';
+    const form = el('form', 'chatform');
+    const inp = el('input'); inp.type = 'text'; inp.id = 'chat-in'; inp.placeholder = 'Es. "lezione con Andrea giovedì dopo le 18"'; inp.autocomplete = 'off'; inp.maxLength = 500;
+    const send = el('button', 'btn primary', 'Invia'); send.type = 'submit';
+    form.append(inp, send);
+    const draw = () => {
+      list.replaceChildren();
+      const msgs = chat.msgs || [];
+      if (!msgs.length) list.append(el('div', 'bubble bot', `Ciao ${S.me.name ? S.me.name.split(' ')[0] : ''}! Posso prenotare, spostare o annullare le tue lezioni, metterti in lista d'attesa e dirti i tuoi punti. Cosa ti serve?`));
+      for (const m of msgs) list.append(el('div', 'bubble ' + (m.role === 'user' ? 'me' : 'bot'), m.text));
+      if (chat.busy) list.append(el('div', 'bubble bot typing', 'Sto scrivendo…'));
+      list.scrollTop = list.scrollHeight;
+    };
+    const call = async (body) => {
+      const { data: { session } } = await sb.auth.getSession();
+      const res = await fetch(`${C.supabaseUrl}/functions/v1/assistente`, { method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session?.access_token || ''}`, apikey: C.supabaseAnonKey }, body: JSON.stringify(body) });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j.error || 'L\'assistente non risponde. Riprova tra poco.');
+      return j;
+    };
+    form.onsubmit = async (e) => {
+      e.preventDefault(); const text = inp.value.trim(); if (!text || chat.busy) return;
+      inp.value = ''; chat.msgs = [...(chat.msgs || []), { role: 'user', text }]; chat.busy = true; draw();
+      try { const j = await call({ message: text }); chat.msgs.push({ role: 'assistant', text: j.reply }); }
+      catch (x) { chat.msgs.push({ role: 'assistant', text: x.message }); }
+      chat.busy = false; draw(); inp.focus();
+      refresh({ week: true, day: true });   // l'assistente può aver prenotato o spostato
+    };
+    openSheet([head('Assistente', 'Prenota parlando: risponde subito, anche di sera.'), list, form]);
+    sheet.classList.add('chat');
+    onClose = () => sheet.classList.remove('chat');
+    draw();
+    if (chat.msgs === null) { try { chat.msgs = (await call({ history: true })).messages || []; } catch { chat.msgs = []; } draw(); }
+  }
+  $('chatfab').onclick = openChat;
+
   function cancelButton(b, after) {
     const btn = el('button', 'btn danger', 'Annulla'); btn.type = 'button'; let armed = false, timer;
     btn.onclick = async () => {
@@ -529,7 +778,8 @@
         }
         await refresh({ mine: false });
       }
-      if (location.hash === '#lezioni' || location.hash === '#profilo') setTab(location.hash.slice(1));
+      await route();
+      window.addEventListener('hashchange', route);
     } catch (e) { $('board').replaceChildren(el('div', 'closed', 'Non riesco a caricare gli orari. Controlla la connessione e riprova.')); }
   })();
 

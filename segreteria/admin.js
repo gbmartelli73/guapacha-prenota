@@ -53,7 +53,7 @@
   function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), 3800); }
 
   const dlg = $('dlg'), sheet = $('sheet');
-  function openSheet(...nodes) { sheet.replaceChildren(...nodes); if (!dlg.open) { try { dlg.showModal(); } catch { dlg.setAttribute('open', ''); } } }
+  function openSheet(...nodes) { sheet.replaceChildren(...nodes.filter((n) => n != null && n !== false)); if (!dlg.open) { try { dlg.showModal(); } catch { dlg.setAttribute('open', ''); } } }
   function closeSheet() { try { dlg.close(); } catch { dlg.removeAttribute('open'); } }
   dlg.addEventListener('click', (e) => { if (e.target === dlg) closeSheet(); });
 
@@ -117,15 +117,18 @@
     try { await loadBase(); } catch (e) { showLogin(e.message); return; }
     $('login').hidden = true; $('app').hidden = false;
     S.date ||= S.status.today;
-    const v = location.hash.slice(1);
-    go(staff() && ['agenda', 'prenotazioni', 'allievi', 'blocchi', 'impostazioni'].includes(v) ? v : 'agenda');
+    const [v, qs] = location.hash.slice(1).split('?');
+    const q = new URLSearchParams(qs || '').get('q');
+    if (q) S.students.q = q;   // dal QR della tessera: #allievi?q=GS-0001
+    go(staff() && VIEWS.includes(v) ? v : 'agenda');
   }
 
+  const VIEWS = ['agenda', 'occupazione', 'attesa', 'prenotazioni', 'allievi', 'blocchi', 'impostazioni'];
   function go(view) {
     if (!staff()) view = 'agenda';
     S.view = view; if (location.hash.slice(1) !== view) history.replaceState(null, '', '#' + view);
     document.querySelectorAll('.nav').forEach((b) => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
-    ({ agenda: viewAgenda, prenotazioni: viewList, allievi: viewStudents, blocchi: viewBlocks, impostazioni: viewSettings })[view]();
+    ({ agenda: viewAgenda, occupazione: viewOccupancy, attesa: viewWaitlist, prenotazioni: viewList, allievi: viewStudents, blocchi: viewBlocks, impostazioni: viewSettings })[view]();
   }
   document.querySelectorAll('.nav').forEach((b) => (b.onclick = () => go(b.dataset.view)));
 
@@ -213,9 +216,16 @@
       el('span', 'b', [S.mode === 'sale' ? t?.name : r?.name, c.start_min ? `inizio ${hm(c)}` : '', c.note].filter(Boolean).join(' · ')));
     if (c.sync_error) s.append(el('span', { class: 'flag bad', title: c.sync_error }, '! cal'));
     else if (c.source !== 'app') s.append(el('span', 'flag', c.source === 'whatsapp' ? 'WA' : 'segr.'));
+    s.append(confDots(c));
     s.onclick = () => { if (s.dataset.dragged) { delete s.dataset.dragged; return; } bookingDetails(c); };
     if (staff() && future(S.day.date, c.hour)) { s.dataset.bid = c.booking_id; s.classList.add('draggable'); }
     return s;
+  }
+  /** tre pallini: sala, insegnante, allievo (verde = confermato) */
+  function confDots(c) {
+    const d = (on, label) => el('i', { class: on ? 'on' : '', title: `${label}: ${on ? 'confermato' : 'da confermare'}` });
+    return el('span', 'conf', d(c.room_confirmed, 'Sala'), d(c.teacher_confirmed, 'Insegnante'), d(c.student_confirmed, 'Allievo'),
+      c.attendance === 'assente' ? el('b', { class: 'abs', title: 'Assente' }, 'A') : null);
   }
   /** caselle su cui si può lasciare una lezione: libere o senza insegnante, non passate né bloccate */
   const dropAttrs = (h, extra) => (staff() ? { 'data-drop': '1', 'data-hour': h, ...extra } : {});
@@ -266,7 +276,22 @@
       staff() ? el('dd', null, `${SRC[c.source] || c.source} · ${new Date(c.created_at).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })}`) : null,
       c.sync_error ? el('dt', null, 'Calendario') : null, c.sync_error ? el('dd', { style: 'color:var(--danger)' }, c.sync_error) : null);
     const head = el('div', null, el('h3', null, `${r?.name || ''} · ${hm(c)}`), el('div', 'meta', cap(fmtDay(S.day.date))));
-    if (!staff()) { openSheet(head, kv, el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'))); return; }
+    const isFuture = future(S.day.date, c.hour);
+    if (!staff()) {
+      const mine = c.teacher_id === S.teacherId;
+      const tc = mine && isFuture ? el('button', { class: c.teacher_confirmed ? 'btn' : 'btn primary', type: 'button', onclick: async () => {
+        try { await rpc('teacher_confirm', { p_id: c.booking_id, p_value: !c.teacher_confirmed }); closeSheet(); toast(c.teacher_confirmed ? 'Conferma tolta' : 'Lezione confermata'); viewAgenda(); } catch (e) { toast(e.message); }
+      } }, c.teacher_confirmed ? 'Togli la mia conferma' : 'Confermo la lezione') : null;
+      openSheet(head, kv, confLine(c), el('div', 'row', tc, el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'))); return;
+    }
+    const toggles = el('div', 'conf-toggles', ...[['sala', 'room_confirmed', 'Sala pronta'], ['insegnante', 'teacher_confirmed', 'Insegnante'], ['allievo', 'student_confirmed', 'Allievo']].map(([k, f, label]) =>
+      el('button', { class: 'tog' + (c[f] ? ' on' : ''), type: 'button', 'aria-pressed': String(!!c[f]), onclick: async () => {
+        try { await rpc('admin_confirm', { p_id: c.booking_id, p_what: k, p_value: !c[f] }); c[f] = !c[f]; bookingDetails(c); viewAgenda(); } catch (e) { toast(e.message); }
+      } }, (c[f] ? '✓ ' : '') + label)));
+    const att = !isFuture ? el('div', 'conf-toggles', el('span', 'label', 'Presenza'), ...[['presente', 'Presente'], ['assente', 'Assente']].map(([v, label]) =>
+      el('button', { class: 'tog' + (c.attendance === v ? ' on' : ''), type: 'button', onclick: async () => {
+        try { await rpc('admin_set_attendance', { p_id: c.booking_id, p_value: c.attendance === v ? null : v }); c.attendance = c.attendance === v ? null : v; bookingDetails(c); viewAgenda(); } catch (e) { toast(e.message); }
+      } }, label)), el('span', 'muted small', 'Gli assenti non ricevono punti.')) : null;
     const row = el('div', 'row');
     if (c.sync_error) row.append(el('button', { class: 'btn', type: 'button', onclick: async () => { await rpc('admin_resync', { p_id: c.booking_id }); toast('Nuovo tentativo avviato: controlla tra un minuto'); closeSheet(); viewAgenda(); } }, 'Riprova calendario'));
     const canMove = future(S.day.date, c.hour);
@@ -276,7 +301,10 @@
       canMove ? el('button', { class: 'btn', type: 'button', onclick: () => moveForm(c) }, 'Sposta') : null,
       confirmBtn('Annulla lezione', 'Conferma annullamento', async () => { await rpc('admin_cancel', { p_id: c.booking_id }); closeSheet(); toast('Lezione annullata. L\'allievo riceve l\'avviso se ha WhatsApp attivo.'); viewAgenda(); }),
       el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'));
-    openSheet(head, kv, row);
+    openSheet(head, kv, el('div', 'label', 'Conferme'), toggles, att, row);
+  }
+  function confLine(c) {
+    return el('div', 'muted small', `Conferme — sala: ${c.room_confirmed ? 'sì' : 'no'} · insegnante: ${c.teacher_confirmed ? 'sì' : 'no'} · allievo: ${c.student_confirmed ? 'sì' : 'no'}`);
   }
 
   // ---------- spostamento (trascinamento o modulo) ----------
@@ -576,46 +604,199 @@
 
   // ================= ALLIEVI =================
   async function viewStudents() {
-    const q = el('input', { type: 'search', id: 'st-q', placeholder: 'Cerca per nome o telefono', value: S.students.q });
+    const q = el('input', { type: 'search', id: 'st-q', placeholder: 'Cerca per nome, telefono o n. tessera', value: S.students.q });
     const body = el('div', null, el('div', 'muted', 'Caricamento…'));
-    $('main').replaceChildren(el('div', 'toolbar', el('h1', { class: 'grow' }, 'Allievi'), q), body);
+    $('main').replaceChildren(el('div', 'toolbar', el('h1', { class: 'grow' }, 'Allievi e tessere'), q,
+      el('button', { class: 'btn primary', type: 'button', onclick: () => newStudent(load) }, '+ Nuovo allievo')), body);
     const load = async () => {
       S.students.q = q.value.trim();
       const rows = await rpc('admin_students', { p_q: S.students.q.replace(/^\+/, '') });
       if (!rows.length) { body.replaceChildren(el('div', 'closedday', S.students.q ? 'Nessun allievo trovato.' : 'Ancora nessun allievo: si registrano da soli al primo accesso all\'app.')); return; }
+      if (rows.length === 1 && /^[A-Za-z0-9]{1,6}-\d{4}$/.test(S.students.q) && rows[0].member_no?.toUpperCase() === S.students.q.toUpperCase() && !S.students.opened) { S.students.opened = true; editStudent(rows[0], load); }
       const tb = el('tbody');
       for (const s of rows) {
         tb.append(el('tr', { style: 'cursor:pointer', onclick: () => editStudent(s, load) },
-          el('td', null, el('b', null, s.name || '(senza nome)')), el('td', 'num', phone(s.phone), s.email ? el('div', 'muted small', s.email) : null), el('td', 'num', s.lessons),
+          el('td', null, el('b', null, s.name || '(senza nome)')), el('td', 'num', phone(s.phone), s.email ? el('div', 'muted small', s.email) : null),
+          el('td', 'num', s.member_no || '—', el('div', 'small', !s.member_until ? el('span', 'pill off', 'da attivare') : s.member_until < S.status.today ? el('span', 'pill bad', 'scaduta') : el('span', 'pill ok', `fino al ${s.member_until.split('-').reverse().join('/')}`))),
+          el('td', 'num', s.lessons),
           el('td', 'num', s.last_date ? fmtShort(s.last_date) : '—'),
           el('td', null, s.wa_consent ? el('span', 'pill ok', 'Sì') : el('span', 'pill off', 'No')), el('td', 'muted', s.notes || '')));
       }
-      body.replaceChildren(el('div', 'table-wrap', el('table', null, el('thead', null, el('tr', null, ...['Nome', 'Telefono', 'Lezioni', 'Ultima', 'WhatsApp', 'Note'].map((h) => el('th', null, h)))), tb)));
+      body.replaceChildren(el('div', 'table-wrap', el('table', null, el('thead', null, el('tr', null, ...['Nome', 'Telefono', 'Tessera', 'Lezioni', 'Ultima', 'WhatsApp', 'Note'].map((h) => el('th', null, h)))), tb)));
     };
     let t; q.oninput = () => { clearTimeout(t); t = setTimeout(load, 250); };
     load().catch((e) => body.replaceChildren(el('div', 'err', e.message)));
   }
-  async function editStudent(s, reload) {
-    if (s.wa_consent === undefined) { // aperto dall'agenda: carica la scheda completa
-      try { s = (await rpc('admin_students', { p_q: s.phone })).find((x) => x.id === s.id) || s; } catch (e) { toast(e.message); return; }
-    }
-    const name = el('input', { type: 'text', id: 'es-name', value: s.name || '' });
-    const email = el('input', { type: 'email', id: 'es-email', value: s.email || '', placeholder: 'Per ricevere gli inviti nel calendario' });
-    const notes = el('textarea', { id: 'es-notes', maxlength: 500 }); notes.value = s.notes || '';
+  async function editStudent(s0, reload) {
+    let s;
+    try { s = await rpc('admin_student', { p_id: s0.id }); } catch (e) { toast(e.message); return; }
+    const STATUS = { attiva: ['ok', 'Attiva'], scaduta: ['bad', 'Scaduta'], da_attivare: ['off', 'Da attivare'] };
+    const dmy = (k) => (k ? k.split('-').reverse().join('/') : '—');
+    const inp = (id, type, v, extra = {}) => el('input', { type, id, value: v ?? '', ...extra });
+    const name = inp('es-name', 'text', s.name), email = inp('es-email', 'email', s.email, { placeholder: 'Per gli inviti nel calendario' });
+    const birth = inp('es-birth', 'date', s.birth_date), cf = inp('es-cf', 'text', s.tax_code, { maxlength: 16 }), addr = inp('es-addr', 'text', s.address);
+    const since = inp('es-since', 'date', s.member_since), until = inp('es-until', 'date', s.member_until), med = inp('es-med', 'date', s.medical_until);
+    const notes = el('textarea', { id: 'es-notes', maxlength: 1000 }); notes.value = s.notes || '';
     const wa = el('input', { type: 'checkbox', id: 'es-wa', checked: !!s.wa_consent });
     const err = el('div', 'err');
-    openSheet(el('div', null, el('h3', null, s.name || 'Allievo'), el('div', 'meta', phone(s.phone))),
-      field('Nome e cognome', name), field('Email', email), field('Note interne (non visibili all\'allievo)', notes),
-      el('label', 'check', wa, 'Riceve messaggi WhatsApp (consenso dato)'), err,
+    const [cls, lbl] = STATUS[s.status] || STATUS.da_attivare;
+    const p = s.points;
+    const medWarn = s.medical_until && s.medical_until < S.status.today ? el('div', null, el('span', 'pill bad', 'Certificato medico scaduto')) : null;
+    const card = el('div', 'mini-card ' + s.status,
+      el('div', null, el('b', null, s.name || 'Allievo'), el('div', 'mono', s.member_no)),
+      el('div', { style: 'text-align:right' }, el('span', `pill ${cls}`, lbl), el('div', 'small', s.member_until ? `fino al ${dmy(s.member_until)}` : 'non attiva')));
+    const renew = el('button', { class: 'btn', type: 'button', onclick: async () => {
+      try { await rpc('admin_renew_member', { p_id: s.id }); toast('Tessera aggiornata'); reload && reload(); editStudent(s, reload); } catch (e) { toast(e.message); }
+    } }, s.status === 'attiva' ? 'Rinnova per la stagione successiva' : 'Attiva per questa stagione');
+    const ptsBox = el('div', 'card', el('div', 'label', 'Punti fedeltà'),
+      el('div', 'pts-row', el('b', 'pts-big', String(p.total)), el('span', 'muted', `punti · ${p.lessons_done} lezioni svolte × ${p.per_lesson}${p.redeemed ? ` · ${p.redeemed} già usati` : ''}`)),
       el('div', 'row',
-        el('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); S.list = { q: s.phone, from: addDays(S.status.today, -180), to: addDays(S.status.today, 60) }; go('prenotazioni'); } }, 'Vedi prenotazioni'),
+        el('button', { class: 'btn primary', type: 'button', disabled: p.total < p.reward, onclick: async () => {
+          try { await rpc('admin_points', { p_id: s.id, p_delta: -p.reward, p_reason: 'premio', p_note: p.reward_label || 'Premio' }); toast('Premio registrato'); editStudent(s, reload); } catch (e) { toast(e.message); }
+        } }, `Usa premio: ${p.reward_label || 'premio'} (−${p.reward})`),
+        el('button', { class: 'btn', type: 'button', onclick: () => pointsForm(s, reload) }, 'Rettifica punti')),
+      s.ledger.length ? el('div', 'muted small', s.ledger.slice(0, 5).map((l) => `${new Date(l.created_at).toLocaleDateString('it-IT')} ${l.delta > 0 ? '+' : ''}${l.delta} ${l.reason}${l.note ? ' (' + l.note + ')' : ''}`).join(' · ')) : null);
+    const up = s.upcoming.length
+      ? el('div', 'muted small', 'Prossime lezioni: ' + s.upcoming.map((b) => `${fmtShort(b.date)} ${hm(b)} ${b.room} con ${b.teacher}${b.student_confirmed ? ' ✓' : ''}`).join(' · '))
+      : el('div', 'muted small', 'Nessuna lezione in programma.');
+    const wl = s.waitlist.length ? el('div', 'muted small', 'In lista d\'attesa: ' + s.waitlist.map((w) => `${fmtShort(w.date)} ${pad(w.hour)}:00${w.teacher ? ' con ' + w.teacher : ''}`).join(' · ')) : null;
+    const pushBtn = s.push ? el('button', { class: 'btn', type: 'button', onclick: async () => { try { await rpc('admin_push_test', { p_student_id: s.id }); toast('Notifica di prova inviata'); } catch (e) { toast(e.message); } } }, 'Notifica di prova') : null;
+    openSheet(el('div', null, el('h3', null, s.name || 'Allievo'), el('div', 'meta', `${phone(s.phone)} · ${s.has_app ? 'usa l\'app' : 'non ha ancora l\'app'}${s.push ? ' · notifiche attive' : ''}`)),
+      card, medWarn, el('div', 'row', renew, pushBtn),
+      el('div', 'fields', field('Iscritto dal', since), field('Tessera valida fino al', until), field('Certificato medico fino al', med)),
+      ptsBox, up, wl,
+      el('div', 'label', 'Anagrafica'),
+      el('div', 'fields', field('Nome e cognome', name), field('Email', email), field('Data di nascita', birth), field('Codice fiscale', cf)),
+      field('Indirizzo', addr), field('Note interne (non visibili all\'allievo)', notes),
+      el('label', 'check', wa, 'Riceve messaggi WhatsApp (consenso dato)'),
+      el('div', 'muted small', `Lezioni annullate: ${s.stats.cancelled} · assenze: ${s.stats.absent}`), err,
+      el('div', 'row',
+        el('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); S.list = { q: s.phone, from: addDays(S.status.today, -180), to: addDays(S.status.today, 60) }; go('prenotazioni'); } }, 'Prenotazioni'),
         el('button', { class: 'btn primary', type: 'button', onclick: async () => {
           try {
-            await rpc('admin_update_student', { p_id: s.id, p_name: name.value, p_notes: notes.value, p_wa_consent: wa.checked });
-            if (email.value.trim() !== (s.email || '')) await rpc('admin_set_student_email', { p_id: s.id, p_email: email.value });
-            closeSheet(); toast('Allievo aggiornato'); reload();
+            await rpc('admin_save_student', { p_id: s.id, p_data: { name: name.value, email: email.value, birth_date: birth.value, tax_code: cf.value, address: addr.value,
+              member_since: since.value, member_until: until.value, medical_until: med.value, notes: notes.value, wa_consent: wa.checked } });
+            closeSheet(); toast('Scheda salvata'); reload && reload();
           } catch (e) { err.textContent = e.message; }
         } }, 'Salva')));
+  }
+  function pointsForm(s, reload) {
+    const n = el('input', { type: 'number', id: 'pf-n', placeholder: 'es. 20 oppure -10', style: 'width:140px' });
+    const why = el('input', { type: 'text', id: 'pf-why', placeholder: 'Motivo (facoltativo)' });
+    const err = el('div', 'err');
+    openSheet(el('h3', null, `Rettifica punti · ${s.name}`), field('Punti (+ aggiunge, − toglie)', n), field('Motivo', why), err,
+      el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: () => editStudent(s, reload) }, 'Indietro'),
+        el('button', { class: 'btn primary', type: 'button', onclick: async () => {
+          const v = parseInt(n.value, 10); if (!v) { err.textContent = 'Scrivi un numero diverso da zero.'; return; }
+          try { await rpc('admin_points', { p_id: s.id, p_delta: v, p_reason: 'rettifica', p_note: why.value }); toast('Punti aggiornati'); editStudent(s, reload); } catch (e) { err.textContent = e.message; }
+        } }, 'Salva')));
+  }
+  function newStudent(reload) {
+    const ph = el('input', { type: 'tel', id: 'ns-phone', placeholder: '+39 333 1234567' }), nm = el('input', { type: 'text', id: 'ns-name' });
+    const err = el('div', 'err');
+    openSheet(el('h3', null, 'Nuovo allievo'), field('Telefono', ph), field('Nome e cognome', nm),
+      el('div', 'muted small', 'Riceve subito il numero di tessera. Quando accede all\'app con questo numero ritrova la sua scheda.'), err,
+      el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'),
+        el('button', { class: 'btn primary', type: 'button', onclick: async () => {
+          try { const s = await rpc('admin_create_student', { p_phone: ph.value, p_name: nm.value }); reload && reload(); editStudent(s, reload); } catch (e) { err.textContent = e.message; }
+        } }, 'Crea')));
+  }
+
+  // ================= OCCUPAZIONE E CONFERME =================
+  async function viewOccupancy() {
+    S.occ ||= S.status.today;
+    const body = el('div', null, el('div', 'muted', 'Caricamento…'));
+    $('main').replaceChildren(el('div', 'toolbar', el('h1', { class: 'grow' }, 'Occupazione e conferme'), el('span', 'muted', `${fmtShort(S.occ)} – ${fmtShort(addDays(S.occ, 6))}`),
+      el('button', { class: 'btn icon', type: 'button', 'aria-label': 'Settimana precedente', onclick: () => { S.occ = addDays(S.occ, -7); viewOccupancy(); } }, '‹'),
+      el('button', { class: 'btn', type: 'button', onclick: () => { S.occ = S.status.today; viewOccupancy(); } }, 'Da oggi'),
+      el('button', { class: 'btn icon', type: 'button', 'aria-label': 'Settimana successiva', onclick: () => { S.occ = addDays(S.occ, 7); viewOccupancy(); } }, '›')), body);
+    let o;
+    try { o = await rpc('admin_occupancy', { p_start: S.occ }); } catch (e) { body.replaceChildren(el('div', 'err', e.message)); return; }
+    const pct = (b, t) => (t ? Math.round((b / t) * 100) : 0);
+    const sum = (rows) => rows.reduce((a, r) => { r.days.forEach((d) => { a.b += d.booked; a.o += d.open; }); return a; }, { b: 0, o: 0 });
+    const R = sum(o.rooms), Tt = sum(o.teachers);
+    const fut = o.lessons.filter((l) => !l.past);
+    const sc = fut.filter((l) => l.student_confirmed).length;
+    const kpi = (n, l, sub) => el('div', 'stat', el('b', null, n), el('span', null, l), sub ? el('span', 'muted small', sub) : null);
+    const heat = (b, t) => { const v = pct(b, t); return el('td', { class: 'heat', style: `--h:${t ? v / 100 : 0}` }, t ? `${b}/${t}` : '—', t ? el('small', null, ` ${v}%`) : null); };
+    const table = (title, rows, dot) => el('div', 'card', el('h2', null, title), el('div', 'table-wrap', el('table', 'occ',
+      el('thead', null, el('tr', null, el('th', null, ''), ...o.days.map((d) => el('th', null, fmtShort(d.date))), el('th', null, 'Settimana'))),
+      el('tbody', null, ...rows.map((r) => {
+        const t = r.days.reduce((a, d) => ({ b: a.b + d.booked, o: a.o + d.open }), { b: 0, o: 0 });
+        return el('tr', null, el('th', null, dot ? el('i', { class: 'dot', style: `--tc:${r.color}` }) : null, ' ', r.name), ...r.days.map((d) => heat(d.booked, d.open)), heat(t.b, t.o));
+      })))));
+    const pending = fut.filter((l) => !(l.room_confirmed && l.teacher_confirmed && l.student_confirmed));
+    const confRow = (l) => {
+      const btn = (k, f, label) => el('button', { class: 'tog small' + (l[f] ? ' on' : ''), type: 'button', onclick: async () => {
+        try { await rpc('admin_confirm', { p_id: l.id, p_what: k, p_value: !l[f] }); viewOccupancy(); } catch (e) { toast(e.message); } } }, (l[f] ? '✓ ' : '') + label);
+      return el('tr', null, el('td', 'num', `${fmtShort(l.date)} ${hm(l)}`), el('td', null, l.room), el('td', null, l.teacher),
+        el('td', null, [l.student, ...(l.guests || []).map((g) => g.name)].join(' + ')),
+        el('td', null, el('div', 'conf-toggles', btn('sala', 'room_confirmed', 'Sala'), btn('insegnante', 'teacher_confirmed', 'Insegnante'), btn('allievo', 'student_confirmed', 'Allievo'))));
+    };
+    body.replaceChildren(
+      el('div', 'stats', kpi(String(o.lessons.length), 'lezioni nei 7 giorni'), kpi(`${pct(R.b, R.o)}%`, 'occupazione sale', `${R.b} ore su ${R.o}`),
+        kpi(`${pct(Tt.b, Tt.o)}%`, 'occupazione insegnanti', `${Tt.b} ore su ${Tt.o} in turno`),
+        kpi(`${sc}/${fut.length}`, 'allievi confermati'), kpi(String(o.waitlist), 'in lista d\'attesa')),
+      table('Sale', o.rooms, false), table('Insegnanti (ballerini)', o.teachers, true),
+      el('div', 'card', el('h2', null, `Da confermare (${pending.length})`),
+        el('div', 'muted small', 'Sala: la segreteria conferma che è pronta. Insegnante: conferma dalla sua agenda (o la segreteria per lui). Allievo: dal pulsante del promemoria WhatsApp, dall\'app o qui.'),
+        pending.length ? el('div', 'table-wrap', el('table', null, el('thead', null, el('tr', null, ...['Quando', 'Sala', 'Insegnante', 'Allievo', 'Conferme'].map((h) => el('th', null, h)))), el('tbody', null, ...pending.map(confRow))))
+          : el('div', 'muted', 'Tutte le lezioni della settimana sono confermate.')));
+  }
+
+  // ================= LISTA D'ATTESA =================
+  async function viewWaitlist() {
+    const from = el('input', { type: 'date', id: 'wl-from', value: S.status.today }), to = el('input', { type: 'date', id: 'wl-to', value: addDays(S.status.today, 30) });
+    const body = el('div', null, el('div', 'muted', 'Caricamento…'));
+    const STATUS = { attiva: ['', 'In attesa'], avvisato: ['ok', 'Avvisato'], prenotato: ['ok', 'Ha prenotato'], annullata: ['off', 'Tolto'] };
+    const load = async () => {
+      let rows;
+      try { rows = await rpc('admin_waitlist', { p_from: from.value, p_to: to.value }); } catch (e) { body.replaceChildren(el('div', 'err', e.message)); return; }
+      if (!rows.length) { body.replaceChildren(el('div', 'closedday', 'Nessuno in lista d\'attesa in questo periodo. Gli allievi si iscrivono toccando una sala occupata nell\'app, o chiedendolo all\'assistente.')); return; }
+      body.replaceChildren(el('div', 'table-wrap', el('table', null,
+        el('thead', null, el('tr', null, ...['Quando', 'Allievo', 'Insegnante', 'Stato', 'Avvisi', ''].map((h) => el('th', null, h)))),
+        el('tbody', null, ...rows.map((w) => {
+          const [c, l] = STATUS[w.status] || ['', w.status];
+          const open = w.status === 'attiva' || w.status === 'avvisato';
+          return el('tr', { class: w.free_now && open ? 'hl' : '' },
+            el('td', 'num', `${fmtShort(w.date)} ${pad(w.hour)}:00`),
+            el('td', null, el('b', null, w.student_name || '(senza nome)'), el('div', 'muted small', phone(w.student_phone))),
+            el('td', null, w.teacher || 'Qualsiasi'),
+            el('td', null, el('span', `pill ${c}`, l), w.free_now && open ? el('div', 'small', el('b', null, 'Posto libero ora')) : null),
+            el('td', 'small', [w.wa_consent && 'WhatsApp', w.push && 'notifica'].filter(Boolean).join(' + ') || 'nessuno: chiamare'),
+            el('td', null, open ? el('div', 'row',
+              el('button', { class: 'btn', type: 'button', onclick: async () => { try { await rpc('admin_waitlist_notify', { p_id: w.id }); toast('Avviso inviato'); load(); } catch (e) { toast(e.message); } } }, 'Avvisa'),
+              el('button', { class: 'btn', type: 'button', onclick: async () => { try { await rpc('admin_waitlist_status', { p_id: w.id, p_status: 'annullata' }); load(); } catch (e) { toast(e.message); } } }, 'Togli')) : null));
+        })))));
+    };
+    from.onchange = to.onchange = load;
+    $('main').replaceChildren(el('div', 'toolbar', el('h1', { class: 'grow' }, 'Lista d\'attesa'), from, to,
+      el('button', { class: 'btn primary', type: 'button', onclick: () => waitlistForm(load) }, '+ Aggiungi')),
+      el('div', 'muted small', 'Quando una lezione viene annullata o spostata, chi è in lista per quell\'ora riceve subito WhatsApp e notifica sul telefono: prenota chi arriva prima.'), body);
+    load();
+  }
+  function waitlistForm(reload) {
+    const q = el('input', { type: 'search', id: 'wf-q', placeholder: 'Cerca allievo (nome, telefono, tessera)', autocomplete: 'off' });
+    const res = el('div', 'results'); let picked = null;
+    const date = el('input', { type: 'date', id: 'wf-date', value: S.status.today, min: S.status.today }), hour = hourSelect('wf-hour', 18, 6, 23);
+    const teacher = el('select', { id: 'wf-t' }, el('option', { value: '' }, 'Qualsiasi insegnante'), ...activeTeachers().map((t) => el('option', { value: t.id }, t.name)));
+    const note = el('input', { type: 'text', id: 'wf-note', placeholder: 'Nota (facoltativa)' });
+    const err = el('div', 'err');
+    let t; q.oninput = () => { picked = null; clearTimeout(t); t = setTimeout(async () => {
+      const rows = q.value.trim() ? await rpc('admin_students', { p_q: q.value.trim().replace(/^\+/, '') }).catch(() => []) : [];
+      res.replaceChildren(...rows.slice(0, 6).map((s) => el('button', { class: 'res', type: 'button', onclick: () => { picked = s; q.value = `${s.name} · ${phone(s.phone)}`; res.replaceChildren(); } },
+        `${s.name || '(senza nome)'} · ${phone(s.phone)}${s.member_no ? ' · ' + s.member_no : ''}`)));
+    }, 250); };
+    openSheet(el('h3', null, 'Aggiungi alla lista d\'attesa'), field('Allievo', q), res,
+      el('div', 'fields', field('Giorno', date), field('Ora', hour), field('Insegnante', teacher)), field('Nota', note), err,
+      el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'),
+        el('button', { class: 'btn primary', type: 'button', onclick: async () => {
+          if (!picked) { err.textContent = 'Scegli un allievo dall\'elenco.'; return; }
+          try {
+            await rpc('admin_waitlist_add', { p_student_id: picked.id, p_date: date.value, p_hour: Number(hour.value), p_teacher_id: teacher.value ? Number(teacher.value) : null, p_note: note.value });
+            closeSheet(); toast('Aggiunto alla lista d\'attesa'); reload();
+          } catch (e) { err.textContent = e.message; }
+        } }, 'Aggiungi')));
   }
 
   // ================= CHIUSURE E CORSI =================
@@ -741,6 +922,11 @@
     const sAd = el('input', { type: 'text', id: 'set-ad', value: settings.school_address || '', placeholder: 'Via, numero, CAP, città' });
     const sU = el('input', { type: 'text', id: 'set-u', value: settings.public_url || appRoot(), placeholder: 'https://prenota.scuola.it' });
     const sW = el('input', { type: 'tel', id: 'set-w', value: settings.whatsapp_number || '', placeholder: '+39 333 0000000' });
+    const sPp = el('input', { type: 'number', id: 'set-pp', value: settings.points_per_lesson ?? 10, min: 0, max: 1000, style: 'width:100px' });
+    const sPr = el('input', { type: 'number', id: 'set-pr', value: settings.points_reward ?? 100, min: 1, max: 10000, style: 'width:100px' });
+    const sPl = el('input', { type: 'text', id: 'set-pl', value: settings.points_reward_label || '', placeholder: 'Lezione omaggio' });
+    const sMp = el('input', { type: 'text', id: 'set-mp', value: settings.member_prefix || 'GS', maxlength: 6, style: 'width:100px' });
+    const sSe = el('input', { type: 'text', id: 'set-se', value: settings.season_end || '08-31', placeholder: '08-31', style: 'width:100px' });
     const rulesErr = el('div', 'err');
     // apertura
     const openRows = [1, 2, 3, 4, 5, 6, 0].map((w) => {
@@ -757,7 +943,8 @@
       try {
         await rpc('admin_save_settings', {
           p_settings: { horizon_days: sH.value, cancel_hours: sC.value, max_active_per_student: sM.value, reminder_hours: sR.value, cal_alarm_minutes: sA.value, lesson_label: sL.value,
-            school_name: sN.value, school_phone: sP.value, school_address: sAd.value, public_url: sU.value, whatsapp_number: sW.value },
+            school_name: sN.value, school_phone: sP.value, school_address: sAd.value, public_url: sU.value, whatsapp_number: sW.value,
+            points_per_lesson: sPp.value, points_reward: sPr.value, points_reward_label: sPl.value, member_prefix: sMp.value, season_end: sSe.value },
           p_opening: openRows.map((r) => ({ weekday: r.w, start_hour: r.on.checked ? Number(r.a.value) : null, end_hour: r.on.checked ? Number(r.z.value) : null })),
         });
         await loadBase();
@@ -828,6 +1015,8 @@
       el('div', 'card', el('h2', null, 'Regole di prenotazione'),
         el('div', 'fields', field('Giorni di anticipo massimo', sH), field('Annullamento libero fino a (ore prima)', sC), field('Lezioni future per allievo (max)', sM), field('Promemoria WhatsApp (ore prima)', sR), field('Avviso nel calendario (minuti prima)', sA)),
         field('Nome della lezione', sL),
+        el('div', 'label', 'Tessere e punti fedeltà'),
+        el('div', 'fields', field('Punti per lezione svolta', sPp), field('Punti per il premio', sPr), field('Premio', sPl), field('Prefisso n. tessera', sMp), field('Fine stagione (mese-giorno)', sSe)),
         el('div', 'label', 'Orari di apertura'), ...openRows.map((r) => r.row), rulesErr, el('div', 'row', saveRules)),
       el('div', 'card', el('h2', null, 'Sale'), roomsBox, el('div', null, addRoom)),
       staffCard(),
