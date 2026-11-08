@@ -163,3 +163,4 @@ body.teacher .nav[data-view]:not([data-view="agenda"]){display:none}
 .slot.ro{cursor:default}
 .slot.ro:hover{border-color:var(--line)}
 .slot.booked.own{border-width:2px;border-left-width:6px;font-weight:600}
+.foot .credit{font-size:11px;opacity:.7;margin-top:10px}

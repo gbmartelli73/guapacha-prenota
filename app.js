@@ -236,6 +236,7 @@
     const lines = [];
     const waNum = String(S.cfg.whatsapp_number || '').replace(/\D/g, '');
     if (S.cfg.whatsapp_bot && waNum) lines.push(['Prenota anche su WhatsApp', `Scrivi alla scuola, ad esempio: "lezione con ${S.cfg.teachers[0]?.name || 'un insegnante'} sabato mattina".`, `https://wa.me/${waNum}`, 'Apri WhatsApp']);
+    if (S.cfg.school_address) lines.push(['Dove siamo', `${S.cfg.school} · ${S.cfg.school_address}`, mapsUrl(), 'Indicazioni']);
     if (S.cfg.school_phone) lines.push(['Segreteria', S.cfg.school_phone, `tel:${S.cfg.school_phone.replace(/\s/g, '')}`, 'Chiama']);
     ct.hidden = !lines.length;
     for (const [t, d, href, btn] of lines) {
@@ -403,6 +404,7 @@
 
   /** ora di inizio (o di fine, +1 ora) con i minuti: le lezioni possono iniziare per es. alle 18:30 */
   const hm = (b, plus = 0) => `${pad(b.hour + plus)}:${pad(b.start_min || 0)}`;
+  const mapsUrl = () => 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(`${S.cfg.school}, ${S.cfg.school_address}`);
   const guestNames = (g) => (g || []).map((x) => x.name).filter(Boolean).join(', ');
 
   // ---------------- calendario personale ----------------
@@ -412,7 +414,7 @@
   function lessonText(b) {
     const title = `${S.cfg.lesson_label || 'Lezione'} con ${b.teacher_name} · ${S.cfg.school}`;
     const details = [`${b.room_name} · ${hm(b)}–${hm(b, 1)}`, guestNames(b.guests) && `Partecipa anche: ${guestNames(b.guests)}`, b.note && `Nota: ${b.note}`].filter(Boolean).join('\n');
-    return { title, details, location: `${S.cfg.school} — ${b.room_name}` };
+    return { title, details, location: S.cfg.school_address ? `${S.cfg.school}, ${S.cfg.school_address}` : `${S.cfg.school} — ${b.room_name}` };
   }
   /** File .ics con l'avviso prima della lezione (lo leggono Outlook, Google, iPhone e Android). */
   function icsFor(b) {
@@ -459,7 +461,8 @@
     openSheet([head(title, `${cap(fmtDay(b.date))} · ${x.details.split('\n')[0]}`),
       ...(guestNames(b.guests) ? [el('div', null, `Partecipa anche: ${guestNames(b.guests)}`)] : []),
       ics, el('div', 'muted small', alarm > 0 ? `Il calendario ti avvisa ${when} prima.` : ''),
-      mk(links.google, 'Google Calendar'), mk(links.outlook, 'Outlook sul web'), close]);
+      mk(links.google, 'Google Calendar'), mk(links.outlook, 'Outlook sul web'),
+      ...(S.cfg.school_address ? [el('div', 'muted small', `📍 ${S.cfg.school_address}`), mk(mapsUrl(), 'Indicazioni per arrivare')] : []), close]);
   }
   function bookedSheet(b) { calendarSheet(b, 'Prenotato!'); }
 

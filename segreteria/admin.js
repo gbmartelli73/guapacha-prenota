@@ -738,6 +738,7 @@
     const sL = el('input', { type: 'text', id: 'set-l', value: settings.lesson_label });
     const sN = el('input', { type: 'text', id: 'set-n', value: settings.school_name || '' });
     const sP = el('input', { type: 'tel', id: 'set-p', value: settings.school_phone || '' });
+    const sAd = el('input', { type: 'text', id: 'set-ad', value: settings.school_address || '', placeholder: 'Via, numero, CAP, città' });
     const sU = el('input', { type: 'text', id: 'set-u', value: settings.public_url || appRoot(), placeholder: 'https://prenota.scuola.it' });
     const sW = el('input', { type: 'tel', id: 'set-w', value: settings.whatsapp_number || '', placeholder: '+39 333 0000000' });
     const rulesErr = el('div', 'err');
@@ -756,7 +757,7 @@
       try {
         await rpc('admin_save_settings', {
           p_settings: { horizon_days: sH.value, cancel_hours: sC.value, max_active_per_student: sM.value, reminder_hours: sR.value, cal_alarm_minutes: sA.value, lesson_label: sL.value,
-            school_name: sN.value, school_phone: sP.value, public_url: sU.value, whatsapp_number: sW.value },
+            school_name: sN.value, school_phone: sP.value, school_address: sAd.value, public_url: sU.value, whatsapp_number: sW.value },
           p_opening: openRows.map((r) => ({ weekday: r.w, start_hour: r.on.checked ? Number(r.a.value) : null, end_hour: r.on.checked ? Number(r.z.value) : null })),
         });
         await loadBase();
@@ -822,7 +823,7 @@
         S.status.sync_errors ? el('div', 'err', `${S.status.sync_errors} prenotazioni future non sono state copiate sul calendario: il sistema riprova da solo.`) : null,
         S.status.outbox_failed ? el('div', 'err', `${S.status.outbox_failed} notifiche non sono partite dopo vari tentativi: controlla i log della funzione "worker" su Supabase.`) : null),
       el('div', 'card', el('h2', null, 'Scuola'),
-        el('div', 'fields', field('Nome della scuola', sN), field('Telefono segreteria', sP), field('Indirizzo dell\'app', sU), field('Numero WhatsApp della scuola', sW)),
+        el('div', 'fields', field('Nome della scuola', sN), field('Telefono segreteria', sP), field('Indirizzo della scuola (va nei calendari)', sAd), field('Indirizzo dell\'app', sU), field('Numero WhatsApp della scuola', sW)),
         el('div', 'muted small', 'Nome e telefono compaiono nell\'app e nei messaggi del bot. L\'indirizzo dell\'app viene mandato dal bot a chi chiede di prenotare. Si salvano con il pulsante qui sotto.')),
       el('div', 'card', el('h2', null, 'Regole di prenotazione'),
         el('div', 'fields', field('Giorni di anticipo massimo', sH), field('Annullamento libero fino a (ore prima)', sC), field('Lezioni future per allievo (max)', sM), field('Promemoria WhatsApp (ore prima)', sR), field('Avviso nel calendario (minuti prima)', sA)),
