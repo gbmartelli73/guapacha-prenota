@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Segreteria · Agenda sale</title>
+<meta name="robots" content="noindex">
+<link rel="icon" href="../logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form id="login-form">
+    <img src="../logo.svg" alt="Guapacha Studio" width="64" height="64" style="align-self:center"><h1 style="text-align:center">Segreteria</h1>
+    <div class="field"><label for="lg-user">Email</label><input type="email" id="lg-user" autocomplete="username" required></div>
+    <div class="field"><label for="lg-pass">Password</label><input type="password" id="lg-pass" autocomplete="current-password" required></div>
+    <div class="err" id="lg-err"></div>
+    <button class="btn primary" type="submit">Entra</button>
+  </form>
+</div>
+
+<div id="app" class="app" hidden>
+  <aside class="side">
+    <div class="brand-row"><img class="logo" src="../logo.svg" alt="" width="36" height="36"><div class="brand" id="brand">Guapacha Studio<span>Segreteria</span></div></div>
+    <button class="nav" type="button" data-view="agenda" aria-current="page">Agenda</button>
+    <button class="nav" type="button" data-view="prenotazioni">Prenotazioni</button>
+    <button class="nav" type="button" data-view="allievi">Allievi</button>
+    <button class="nav" type="button" data-view="blocchi">Chiusure e corsi</button>
+    <button class="nav" type="button" data-view="impostazioni">Impostazioni</button>
+    <button class="nav only-mobile" type="button" id="logout2">Esci</button>
+    <div class="foot"><div id="integr"></div><button type="button" id="logout">Esci</button></div>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+
+<dialog id="dlg"><div class="sheet" id="sheet"></div></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="../vendor/supabase.js"></script>
+<script src="../config.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>

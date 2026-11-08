@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Prenota una lezione</title>
+<meta name="theme-color" content="#32735B">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Guapacha">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="logo.svg" type="image/svg+xml">
+<link rel="icon" href="icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand-wrap"><img class="logo" src="logo.svg" alt="" width="34" height="34"><div class="brand" id="brand">Guapacha Studio</div></div>
+  <button class="chip" id="account" type="button">Accedi</button>
+</header>
+
+<main>
+  <!-- PRENOTA -->
+  <section id="view-prenota" style="display:flex;flex-direction:column;gap:18px">
+    <div id="install" class="banner" hidden>
+      <span id="install-text">Aggiungi l'app alla schermata Home per aprirla con un tocco.</span>
+      <button class="btn" id="install-btn" type="button" hidden>Installa</button>
+    </div>
+    <div>
+      <h1>Prenota una lezione</h1>
+      <p class="muted small" id="subtitle" style="margin:6px 0 0">Lezioni individuali da 60 minuti</p>
+    </div>
+    <div>
+      <div class="label">Insegnanti · tocca per filtrare</div>
+      <div class="teachers" id="teachers"></div>
+    </div>
+    <div>
+      <div class="weekbar">
+        <button class="nav" id="prev" type="button" aria-label="Settimana precedente">‹</button>
+        <div class="range" id="range"></div>
+        <button class="nav" id="next" type="button" aria-label="Settimana successiva">›</button>
+      </div>
+      <div class="days" id="days"></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <h2 id="daytitle"></h2>
+      <div id="board"></div>
+      <div class="legend">
+        <span><i></i>Libera · i pallini sono gli insegnanti disponibili</span>
+        <span><i class="lm"></i>La tua</span>
+        <span><i class="lt"></i>Occupata</span>
+        <span><i class="lo"></i>Non prenotabile</span>
+      </div>
+    </div>
+  </section>
+
+  <!-- LE MIE LEZIONI -->
+  <section id="view-lezioni" hidden style="display:flex;flex-direction:column;gap:14px">
+    <h1>Le mie lezioni</h1>
+    <div id="upcoming" class="list"></div>
+    <details id="pastbox" hidden>
+      <summary class="label" style="cursor:pointer;padding:6px 0">Lezioni passate e annullate</summary>
+      <div id="past" class="list" style="margin-top:8px"></div>
+    </details>
+  </section>
+
+  <!-- PROFILO -->
+  <section id="view-profilo" hidden style="display:flex;flex-direction:column;gap:14px">
+    <h1>Profilo</h1>
+    <div id="profile"></div>
+    <div id="contact" class="card" hidden></div>
+  </section>
+</main>
+
+<nav class="tabbar" aria-label="Sezioni">
+  <button class="tab" type="button" data-tab="prenota" aria-current="page">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="3"/><path d="M8 3v4M16 3v4M3 10h18M12 14v4M10 16h4"/></svg>
+    Prenota
+  </button>
+  <button class="tab" type="button" data-tab="lezioni">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6h11M9 12h11M9 18h11"/><circle cx="4.5" cy="6" r="1.2"/><circle cx="4.5" cy="12" r="1.2"/><circle cx="4.5" cy="18" r="1.2"/></svg>
+    <span>Le mie lezioni<span class="badge" id="badge" hidden></span></span>
+  </button>
+  <button class="tab" type="button" data-tab="profilo">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-4 4.5-6 8-6s6.5 2 8 6"/></svg>
+    Profilo
+  </button>
+</nav>
+
+<dialog id="dlg"><div class="sheet" id="sheet"></div></dialog>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="vendor/supabase.js"></script>
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

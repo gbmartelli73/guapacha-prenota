@@ -1,0 +1,10 @@
+/*
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: same-origin
+  X-Frame-Options: DENY
+/sw.js
+  Cache-Control: no-cache
+/config.js
+  Cache-Control: no-cache
+/segreteria/*
+  X-Robots-Tag: noindex
