@@ -287,7 +287,17 @@
     return new Promise((resolve) => {
       let done = false;
       const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
-      stepPhone();
+      const powered = () => {
+        const pw = el('a', 'powered'); pw.href = 'https://www.thinkdifferentsrl.it'; pw.target = '_blank'; pw.rel = 'noopener';
+        const pwi = el('img'); pwi.src = 'thinkdifferent.svg'; pwi.alt = 'Think Different srl'; pwi.width = 62; pwi.height = 23;
+        pw.append(el('span', null, 'Powered by'), pwi); return pw;
+      };
+      const mkField = (label, input, hint) => { const f = el('div', 'field'); const l = el('label', null, label); l.htmlFor = input.id; f.append(l, input); if (hint) f.append(el('div', 'muted small', hint)); return f; };
+      const mkInput = (id, type, attrs = {}) => { const i = el('input'); i.id = id; i.type = type; for (const [k, v] of Object.entries(attrs)) { if (v === true) i.setAttribute(k, ''); else i.setAttribute(k, v); } return i; };
+      (async () => {
+        try { S.authOpts ||= await rpc('auth_options'); } catch { S.authOpts = { otp: false, signup: true }; }
+        stepLogin();
+      })();
 
       function stepPhone() {
         const form = el('form'); form.style.cssText = 'display:flex;flex-direction:column;gap:14px';
@@ -298,7 +308,7 @@
         const pw = el('a', 'powered'); pw.href = 'https://www.thinkdifferentsrl.it'; pw.target = '_blank'; pw.rel = 'noopener';
         const pwi = el('img'); pwi.src = 'thinkdifferent.svg'; pwi.alt = 'Think Different srl'; pwi.width = 62; pwi.height = 23;
         pw.append(el('span', null, 'Powered by'), pwi);
-        const alt = el('button', 'btn block', 'Hai email e password? Accedi così'); alt.type = 'button'; alt.onclick = () => { onClose = null; stepPassword(); };
+        const alt = el('button', 'btn block', 'Accedi con la password'); alt.type = 'button'; alt.onclick = () => { onClose = null; stepLogin(); };
         form.append(f, el('div', 'muted small', 'Ti mandiamo un codice di 6 cifre su WhatsApp.'), err, b, alt, pw);
         form.onsubmit = async (e) => {
           e.preventDefault(); err.textContent = ''; b.disabled = true; b.textContent = 'Invio…';
@@ -311,29 +321,97 @@
         };
         openSheet([head('Accedi', 'Per prenotare serve solo il numero di telefono.'), form], () => finish(false));
       }
-      // accesso con email e password (dati consegnati dalla segreteria)
-      function stepPassword() {
+      // accesso con email (o cellulare) e password
+      function stepLogin() {
         const form = el('form'); form.style.cssText = 'display:flex;flex-direction:column;gap:14px';
-        const f1 = el('div', 'field'); const l1 = el('label', null, 'Email'); l1.htmlFor = 'l-email';
-        const e1 = el('input'); e1.type = 'email'; e1.id = 'l-email'; e1.autocomplete = 'username'; e1.required = true; f1.append(l1, e1);
-        const f2 = el('div', 'field'); const l2 = el('label', null, 'Password'); l2.htmlFor = 'l-pass';
-        const p2 = el('input'); p2.type = 'password'; p2.id = 'l-pass'; p2.autocomplete = 'current-password'; p2.required = true; f2.append(l2, p2);
+        const u = mkInput('l-user', 'text', { autocomplete: 'username', autocapitalize: 'none', spellcheck: 'false', required: true, placeholder: 'nome@email.it oppure 333 1234567' });
+        const p = mkInput('l-pass', 'password', { autocomplete: 'current-password', required: true });
         const err = el('div', 'err');
         const b = el('button', 'btn primary block', 'Entra'); b.type = 'submit';
-        const back = el('button', 'btn block', 'Entra con il cellulare'); back.type = 'button'; back.onclick = () => { onClose = null; stepPhone(); };
-        form.append(f1, f2, err, b, back);
+        const opts = S.authOpts || {};
+        const reg = opts.signup ? (() => { const x = el('button', 'btn block', 'Non sei ancora iscritto? Iscriviti'); x.type = 'button'; x.onclick = () => { onClose = null; stepSignup(); }; return x; })() : null;
+        const otp = opts.otp ? (() => { const x = el('button', 'btn block', 'Accedi con il codice sul cellulare'); x.type = 'button'; x.onclick = () => { onClose = null; stepPhone(); }; return x; })() : null;
+        const tel = opts.school_phone ? String(opts.school_phone) : '';
+        const forgot = el('div', 'muted small'); forgot.style.textAlign = 'center';
+        forgot.append('Password dimenticata? ');
+        if (tel) { const a2 = el('a', null, 'Chiama la segreteria'); a2.href = 'tel:' + tel.replace(/[^\d+]/g, ''); forgot.append(a2, ': te la reimposta subito.'); }
+        else forgot.append('Chiedi alla segreteria: te la reimposta subito.');
+        form.append(mkField('Email o cellulare', u), mkField('Password', p), err, b, ...(reg ? [reg] : []), ...(otp ? [otp] : []), forgot, powered());
         form.onsubmit = async (e) => {
           e.preventDefault(); err.textContent = ''; b.disabled = true;
           try {
-            const { error } = await sb.auth.signInWithPassword({ email: e1.value.trim().toLowerCase(), password: p2.value });
-            if (error) throw new Error(/invalid|credentials/i.test(error.message) ? 'Email o password non corretti.' : authError(error, 'Accesso non riuscito. Riprova.'));
+            const v = u.value.trim();
+            const cred = v.includes('@') ? { email: v.toLowerCase(), password: p.value } : { phone: normPhone(v), password: p.value };
+            const { error } = await sb.auth.signInWithPassword(cred);
+            if (error) throw new Error(/invalid|credentials/i.test(error.message) ? 'Email/cellulare o password non corretti.' : /banned/i.test(error.message) ? 'Questo account è sospeso: contatta la segreteria.' : authError(error, 'Accesso non riuscito. Riprova.'));
             S.me = await rpc('me_update');
             S.cfg = await rpc('public_config');
             if (!S.me.name) stepName(); else { onClose = null; closeSheet(); await afterLogin(); finish(true); }
           } catch (x) { err.textContent = x.message; b.disabled = false; }
         };
         onClose = null;
-        openSheet([head('Accedi con email', 'Usa l\'email e la password che ti ha dato la segreteria.'), form], () => finish(false));
+        openSheet([head('Accedi', opts.signup ? 'Entra con la tua email (o il cellulare) e la password. Prima volta? Iscriviti.' : 'Entra con la tua email (o il cellulare) e la password.'), form], () => finish(false));
+      }
+
+      // iscrizione con tutti i dati
+      function stepSignup() {
+        const form = el('form'); form.style.cssText = 'display:flex;flex-direction:column;gap:12px'; form.noValidate = false;
+        const fn = mkInput('su-first', 'text', { autocomplete: 'given-name', required: true });
+        const ln = mkInput('su-last', 'text', { autocomplete: 'family-name', required: true });
+        const ph = mkInput('su-phone', 'tel', { autocomplete: 'tel', required: true, placeholder: '+39 333 123 4567' });
+        const em = mkInput('su-email', 'email', { autocomplete: 'email', required: true, autocapitalize: 'none' });
+        const bd = mkInput('su-birth', 'date', { autocomplete: 'bday', required: true, max: S.cfg?.today || '' });
+        const cf = mkInput('su-cf', 'text', { autocapitalize: 'characters', spellcheck: 'false', maxlength: 16, required: true, placeholder: 'RSSMRA80A01H501U' });
+        const ad = mkInput('su-addr', 'text', { autocomplete: 'street-address', required: true, placeholder: 'Via, numero civico, CAP, città' });
+        const gd = mkInput('su-guard', 'text', { autocomplete: 'off', placeholder: 'Nome e cognome' });
+        const gf = mkField('Genitore o tutore', gd, 'Obbligatorio per gli allievi minorenni.'); gf.hidden = true;
+        const pw1 = mkInput('su-pw', 'password', { autocomplete: 'new-password', required: true, minlength: 8 });
+        const pw2 = mkInput('su-pw2', 'password', { autocomplete: 'new-password', required: true, minlength: 8 });
+        const hp = mkInput('su-web', 'text', { tabindex: '-1', autocomplete: 'off', 'aria-hidden': 'true' }); hp.style.cssText = 'position:absolute;left:-5000px;width:1px;height:1px;opacity:0';
+        const wa = el('label', 'check'); const wac = mkInput('su-wa', 'checkbox'); wac.checked = true; wa.append(wac, el('span', null, 'Voglio ricevere conferme e promemoria delle lezioni su WhatsApp.'));
+        const pr = el('label', 'check'); const prc = mkInput('su-priv', 'checkbox', { required: true }); pr.append(prc, el('span', null, 'Ho letto l\'informativa e acconsento al trattamento dei miei dati per l\'iscrizione e la gestione delle lezioni.'));
+        const info = el('details', 'muted small');
+        info.append(el('summary', null, 'Leggi l\'informativa sulla privacy'),
+          el('p', null, `I dati raccolti (anagrafica, contatti, codice fiscale e, per i minori, dati del genitore) sono trattati da ${S.authOpts?.school || 'la scuola'} solo per gestire iscrizione, tesseramento, prenotazioni e comunicazioni sulle lezioni. Non sono ceduti a terzi, salvo gli obblighi di legge e i servizi tecnici necessari all'app. Puoi chiedere in qualsiasi momento di vederli, correggerli o cancellarli rivolgendoti alla segreteria.`));
+        const sync = () => {
+          if (!bd.value) { gf.hidden = true; return; }
+          const d = new Date(bd.value); const t = new Date(); let age = t.getFullYear() - d.getFullYear(); if (t < new Date(t.getFullYear(), d.getMonth(), d.getDate())) age--;
+          gf.hidden = age >= 18; gd.required = age < 18;
+        };
+        bd.onchange = sync; bd.oninput = sync;
+        cf.oninput = () => { cf.value = cf.value.toUpperCase().replace(/\s/g, ''); };
+        const err = el('div', 'err');
+        const b = el('button', 'btn primary block', 'Completa l\'iscrizione'); b.type = 'submit';
+        const back = el('button', 'btn block', 'Sono già iscritto: accedi'); back.type = 'button'; back.onclick = () => { onClose = null; stepLogin(); };
+        const row2 = (x, y) => { const r = el('div'); r.style.cssText = 'display:grid;grid-template-columns:1fr 1fr;gap:10px'; r.append(x, y); return r; };
+        form.append(row2(mkField('Nome', fn), mkField('Cognome', ln)), mkField('Cellulare', ph), mkField('Email', em, 'Ti servirà per entrare nell\'app.'),
+          row2(mkField('Data di nascita', bd), mkField('Codice fiscale', cf)), mkField('Indirizzo di residenza', ad), gf,
+          row2(mkField('Password', pw1), mkField('Ripeti la password', pw2)), el('div', 'muted small', 'Almeno 8 caratteri.'),
+          hp, wa, pr, info, err, b, back);
+        form.onsubmit = async (e) => {
+          e.preventDefault(); err.textContent = '';
+          if (pw1.value !== pw2.value) { err.textContent = 'Le due password non coincidono.'; pw2.focus(); return; }
+          let phone; try { phone = normPhone(ph.value); } catch (x) { err.textContent = x.message; ph.focus(); return; }
+          b.disabled = true; b.textContent = 'Iscrizione in corso…';
+          try {
+            const res = await fetch(`${C.supabaseUrl}/functions/v1/iscrizione`, {
+              method: 'POST', headers: { 'Content-Type': 'application/json', apikey: C.supabaseAnonKey, Authorization: `Bearer ${C.supabaseAnonKey}` },
+              body: JSON.stringify({ first_name: fn.value, last_name: ln.value, phone, email: em.value, birth_date: bd.value, tax_code: cf.value,
+                address: ad.value, guardian_name: gf.hidden ? '' : gd.value, wa_consent: wac.checked, privacy: prc.checked, password: pw1.value, website: hp.value }),
+            });
+            const j = await res.json().catch(() => ({}));
+            if (!res.ok) throw new Error(j.error || 'Iscrizione non riuscita. Riprova tra poco.');
+            const { error } = await sb.auth.signInWithPassword({ email: em.value.trim().toLowerCase(), password: pw1.value });
+            if (error) throw new Error('Iscrizione completata: ora accedi con la tua email e la password.');
+            S.me = await rpc('me_update');
+            S.cfg = await rpc('public_config');
+            onClose = null; closeSheet(); await refresh(); finish(true);
+            toast(`Benvenuto ${(S.me?.name || fn.value).trim().split(' ')[0]}! La segreteria attiverà la tua tessera.`);
+          } catch (x) { err.textContent = x.message; b.disabled = false; b.textContent = 'Completa l\'iscrizione'; }
+        };
+        onClose = null;
+        openSheet([head('Iscriviti', `Compila i tuoi dati per iscriverti a ${S.authOpts?.school || 'la scuola'} e prenotare le lezioni.`), form], () => finish(false));
+        setTimeout(() => fn.focus(), 60);
       }
       function stepCode(phone) {
         const form = el('form'); form.style.cssText = 'display:flex;flex-direction:column;gap:14px';

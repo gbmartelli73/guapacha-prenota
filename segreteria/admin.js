@@ -656,6 +656,8 @@
     const [cls, lbl] = STATUS[s.status] || STATUS.da_attivare;
     const p = s.points;
     const medWarn = s.medical_until && s.medical_until < S.status.today ? el('div', null, el('span', 'pill bad', 'Certificato medico scaduto')) : null;
+    const signupInfo = (s.guardian_name || s.signup_at) ? el('div', 'muted small', [s.guardian_name ? `Genitore/tutore: ${s.guardian_name}` : null,
+      s.signup_at ? `Iscritto dall'app il ${dmy(String(s.signup_at).slice(0, 10))}${s.privacy_at ? ' · privacy accettata' : ''}` : null].filter(Boolean).join(' · ')) : null;
     const card = el('div', 'mini-card ' + s.status,
       el('div', null, el('b', null, s.name || 'Allievo'), el('div', 'mono', s.member_no)),
       el('div', { style: 'text-align:right' }, el('span', `pill ${cls}`, lbl), el('div', 'small', s.member_until ? `fino al ${dmy(s.member_until)}` : 'non attiva')));
@@ -676,7 +678,7 @@
     const wl = s.waitlist.length ? el('div', 'muted small', 'In lista d\'attesa: ' + s.waitlist.map((w) => `${fmtShort(w.date)} ${pad(w.hour)}:00${w.teacher ? ' con ' + w.teacher : ''}`).join(' · ')) : null;
     const pushBtn = s.push ? el('button', { class: 'btn', type: 'button', onclick: async () => { try { await rpc('admin_push_test', { p_student_id: s.id }); toast('Notifica di prova inviata'); } catch (e) { toast(e.message); } } }, 'Notifica di prova') : null;
     openSheet(el('div', null, el('h3', null, s.name || 'Allievo'), el('div', 'meta', `${phone(s.phone)} · ${s.has_app ? 'usa l\'app' : 'non ha ancora l\'app'}${s.push ? ' · notifiche attive' : ''}`)),
-      card, medWarn, el('div', 'row', renew, pushBtn),
+      card, medWarn, signupInfo, el('div', 'row', renew, pushBtn),
       el('div', 'fields', field('Iscritto dal', since), field('Tessera valida fino al', until), field('Certificato medico fino al', med)),
       ptsBox, up, wl,
       el('div', 'label', 'Anagrafica'),

@@ -359,8 +359,25 @@
     const table = el('div', 'table-wrap', el('table', null,
       el('thead', null, el('tr', null, ['Nome', 'Accesso', 'Ruolo', 'Ultimo accesso', 'Stato', ''].map((h) => el('th', null, h)))),
       el('tbody', null, rows.length ? rows : el('tr', null, el('td', { colspan: 6, class: 'muted' }, 'Nessuna utenza trovata.')))));
-    const note = el('div', 'note', 'Gli allievi entrano nell\'app con il numero di cellulare (codice via SMS/WhatsApp). Se dai a un allievo email e password, può entrare anche con quelle. Eliminare un account toglie solo l\'accesso: anagrafica, tessera e lezioni restano.');
-    main.replaceChildren(head, el('div', 'toolbar', tabs, el('span', 'grow'), search), table, note);
+    const note = el('div', 'note', 'Gli allievi si iscrivono dall\'app con la scheda "Iscriviti" oppure li crei tu qui con email e password. Eliminare un account toglie solo l\'accesso: anagrafica, tessera e lezioni restano.');
+    main.replaceChildren(head, el('div', 'toolbar', tabs, el('span', 'grow'), search), table, note, authCard());
+  }
+
+  /** Come entrano gli allievi nell'app: iscrizione libera e accesso con codice. */
+  function authCard() {
+    const card = el('div', 'card', el('h2', null, 'Accesso degli allievi all\'app'), el('p', 'muted', 'Carico…'));
+    rpc('auth_options').then((o) => {
+      const sg = el('input', { type: 'checkbox', id: 'ao-signup', checked: !!o.signup });
+      const ot = el('input', { type: 'checkbox', id: 'ao-otp', checked: !!o.otp });
+      const save = async (patch) => { try { await rpc('sa_auth_options', patch); toast('Impostazione salvata'); } catch (x) { toast(x.message); } };
+      sg.onchange = () => save({ p_signup: sg.checked });
+      ot.onchange = () => save({ p_otp: ot.checked });
+      card.replaceChildren(el('h2', null, 'Accesso degli allievi all\'app'),
+        el('div', 'muted small', 'Gli allievi entrano con email (o cellulare) e password.'),
+        el('label', 'check', sg, el('span', null, el('b', null, 'Iscrizione libera dall\'app'), ' — chiunque può iscriversi compilando la scheda con i suoi dati; la tessera resta "da attivare" finché la segreteria non la rinnova.')),
+        el('label', 'check', ot, el('span', null, el('b', null, 'Accesso anche con codice sul cellulare'), ' — attivalo solo quando l\'invio dei codici via WhatsApp o SMS è configurato.')));
+    }).catch((x) => card.replaceChildren(el('h2', null, 'Accesso degli allievi all\'app'), el('p', 'err', x.message)));
+    return card;
   }
 
   const stateCell = (banned, never) => banned ? el('span', 'pill bad', 'Sospeso') : never ? el('span', 'pill off', 'Mai entrato') : el('span', 'pill ok', 'Attivo');
@@ -389,7 +406,7 @@
   function newUser(preset = {}) {
     let role = preset.role || 'allievo';
     const pick = el('div', 'rolepick', [
-      ['allievo', 'Allievo', 'entra con il cellulare (e, se vuoi, email e password)'],
+      ['allievo', 'Allievo', 'entra nell\'app con email (o cellulare) e password'],
       ['segreteria', 'Segreteria', 'agenda, prenotazioni, allievi, impostazioni'],
       ['insegnante', 'Insegnante', 'vede le sue lezioni e conferma'],
       ['admin', 'Amministratore', 'utenze e insights (e segreteria)'],
@@ -408,14 +425,14 @@
       pick.querySelectorAll('button').forEach((b, i) => b.setAttribute('aria-pressed', String(['allievo', 'segreteria', 'insegnante', 'admin'][i] === role)));
       box.replaceChildren();
       if (role === 'allievo') {
-        const pw = pwInput('n-pw', false);
+        const pw = pwInput('n-pw', true);
         box.append(
           field('Nome e cognome', el('input', { type: 'text', id: 'n-name', required: true, autocomplete: 'off', value: preset.name || '' })),
           field('Cellulare', el('input', { type: 'tel', id: 'n-phone', required: true, placeholder: '+39 333 123 4567', value: preset.phone ? phone(preset.phone) : '' })),
-          field('Email', el('input', { type: 'email', id: 'n-email', placeholder: 'facoltativa (serve per l\'accesso con password)', value: preset.email || '' })),
+          field('Email', el('input', { type: 'email', id: 'n-email', required: true, value: preset.email || '' })),
           pw.node,
           el('label', 'check', el('input', { type: 'checkbox', id: 'n-wa' }), el('span', null, 'Ha dato il consenso a ricevere messaggi WhatsApp')),
-          el('div', 'note', 'Senza password l\'allievo entra nell\'app con il cellulare e il codice. Con email e password può entrare anche con quelle (pulsante "Accedi con email" nell\'app).'));
+          el('div', 'note', 'L\'allievo entra nell\'app con l\'email (o il cellulare) e questa password. Può anche iscriversi da solo dall\'app con il pulsante "Iscriviti".'));
       } else {
         const pw = pwInput('n-pw', true);
         box.append(
@@ -459,7 +476,7 @@
     const base = new URL('../', location.href).href;
     const where = role === 'allievo' ? base : role === 'admin' ? location.href.split('#')[0] : new URL('../segreteria/', location.href).href;
     const lines = role === 'allievo'
-      ? [`App: ${base}`, `Accesso: con il cellulare ${body.phone} (codice)`, ...(r.login ? [`Oppure email: ${r.login}`, `Password: ${body.password}`] : [])]
+      ? [`App: ${base}`, ...(r.login ? [`Email: ${r.login} (oppure il cellulare ${body.phone})`, `Password: ${body.password}`] : [`Accesso: con il cellulare ${body.phone}`])]
       : [`Indirizzo: ${where}`, `Nome utente: ${body.username}`, `Password: ${body.password}`, ...(role === 'admin' ? ['(al primo accesso sceglierà una nuova password)'] : [])];
     const text = lines.join('\n');
     const pre = el('pre', { style: 'white-space:pre-wrap;background:var(--soft);border-radius:10px;padding:12px;margin:0;font-family:var(--f-mono);font-size:13px' }, text);
