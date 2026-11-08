@@ -134,7 +134,7 @@
         if (c.status === 'booked') {
           const t = tmap[c.teacher_id];
           if (c.mine) {
-            b.classList.add('mine'); b.append(el('span', 'st', t ? t.name : ''), el('span', 'sm', 'La tua'));
+            b.classList.add('mine'); b.append(el('span', 'st', t ? t.name : ''), el('span', 'sm', c.start_min ? `La tua · ${hm(c)}` : 'La tua'));
             b.onclick = () => openMine(c, r, t);
             b.setAttribute('aria-label', `${label}: la tua lezione con ${t ? t.name : ''}`);
           } else {
@@ -166,7 +166,7 @@
   function lessonRow(b, { past = false } = {}) {
     const d = parse(b.date);
     const row = el('div', 'bk' + (past ? ' past' : ''));
-    const when = el('div', 'when'); when.append(el('b', null, `${DOW[d.getDay()]} ${d.getDate()}`), el('span', null, `${MON[d.getMonth()]} · ${pad(b.hour)}:00`));
+    const when = el('div', 'when'); when.append(el('b', null, `${DOW[d.getDay()]} ${d.getDate()}`), el('span', null, `${MON[d.getMonth()]} · ${hm(b)}`));
     const what = el('div', 'what');
     const title = el('b'); const dot = el('i', 'dot'); dot.style.setProperty('--tc', b.teacher_color || 'var(--muted)');
     title.append(dot, `${b.room_name} con ${b.teacher_name}`);
@@ -394,13 +394,15 @@
     dl.append(el('div', null, `Insegnante: ${t ? `${t.name} · ${t.style}` : '—'}`));
     if (guestNames(cell.guests)) dl.append(el('div', null, `Partecipa anche: ${guestNames(cell.guests)}`));
     if (cell.note) dl.append(el('div', 'muted small', `Nota: ${cell.note}`));
-    const b = { id: cell.booking_id, date: S.sel, hour: cell.hour, room_name: room.name, teacher_name: t?.name || '', teacher_style: t?.style, guests: cell.guests, note: cell.note };
+    const b = { id: cell.booking_id, date: S.sel, hour: cell.hour, start_min: cell.start_min || 0, room_name: room.name, teacher_name: t?.name || '', teacher_style: t?.style, guests: cell.guests, note: cell.note };
     const row = el('div', 'row'); const close = el('button', 'btn', 'Chiudi'); close.type = 'button'; close.onclick = closeSheet;
     const cal = el('button', 'btn', 'Calendario'); cal.type = 'button'; cal.onclick = () => calendarSheet(b);
     row.append(cancelButton(b, closeSheet), cal, close);
-    openSheet([head(`${room.name} · ${pad(cell.hour)}:00`, `${cap(fmtDay(S.sel))} · la tua lezione`), dl, row]);
+    openSheet([head(`${room.name} · ${hm(cell)}`, `${cap(fmtDay(S.sel))} · la tua lezione`), dl, row]);
   }
 
+  /** ora di inizio (o di fine, +1 ora) con i minuti: le lezioni possono iniziare per es. alle 18:30 */
+  const hm = (b, plus = 0) => `${pad(b.hour + plus)}:${pad(b.start_min || 0)}`;
   const guestNames = (g) => (g || []).map((x) => x.name).filter(Boolean).join(', ');
 
   // ---------------- calendario personale ----------------
@@ -409,7 +411,7 @@
     'TZOFFSETTO:+0100', 'TZNAME:CET', 'DTSTART:19701025T030000', 'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU', 'END:STANDARD', 'END:VTIMEZONE'];
   function lessonText(b) {
     const title = `${S.cfg.lesson_label || 'Lezione'} con ${b.teacher_name} · ${S.cfg.school}`;
-    const details = [`${b.room_name} · ${pad(b.hour)}:00–${pad(b.hour + 1)}:00`, guestNames(b.guests) && `Partecipa anche: ${guestNames(b.guests)}`, b.note && `Nota: ${b.note}`].filter(Boolean).join('\n');
+    const details = [`${b.room_name} · ${hm(b)}–${hm(b, 1)}`, guestNames(b.guests) && `Partecipa anche: ${guestNames(b.guests)}`, b.note && `Nota: ${b.note}`].filter(Boolean).join('\n');
     return { title, details, location: `${S.cfg.school} — ${b.room_name}` };
   }
   /** File .ics con l'avviso prima della lezione (lo leggono Outlook, Google, iPhone e Android). */
@@ -421,21 +423,21 @@
     return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Prenota//Lezioni//IT', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
       ...(tz === 'Europe/Rome' ? ROME_TZ : []),
       'BEGIN:VEVENT', `UID:lezione-${b.id}@prenota`, `DTSTAMP:${now}`,
-      `DTSTART;TZID=${tz}:${d}T${pad(b.hour)}0000`, `DTEND;TZID=${tz}:${d}T${pad(b.hour + 1)}0000`,
+      `DTSTART;TZID=${tz}:${d}T${pad(b.hour)}${pad(b.start_min || 0)}00`, `DTEND;TZID=${tz}:${d}T${pad(b.hour + 1)}${pad(b.start_min || 0)}00`,
       `SUMMARY:${esc(x.title)}`, `LOCATION:${esc(x.location)}`, `DESCRIPTION:${esc(x.details)}`,
       ...(alarm > 0 ? ['BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${esc(x.title)}`, `TRIGGER:-PT${alarm}M`, 'END:VALARM'] : []),
       'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
   }
   function downloadIcs(b) {
-    const ics = icsFor(b), name = `lezione-${b.date}-${pad(b.hour)}.ics`;
+    const ics = icsFor(b), name = `lezione-${b.date}-${pad(b.hour)}${pad(b.start_min || 0)}.ics`;
     if (/iphone|ipad|ipod/i.test(navigator.userAgent)) { location.href = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics); return; }
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' })); a.download = name;
     document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
   }
   function calLinks(b) {
     const x = lessonText(b), [y, m, d] = b.date.split('-').map(Number);
-    const s0 = new Date(y, m - 1, d, b.hour), s1 = new Date(y, m - 1, d, b.hour + 1);
-    const g = (dt) => `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}T${pad(dt.getHours())}0000`;
+    const s0 = new Date(y, m - 1, d, b.hour, b.start_min || 0), s1 = new Date(y, m - 1, d, b.hour + 1, b.start_min || 0);
+    const g = (dt) => `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
     const google = 'https://calendar.google.com/calendar/render?' + new URLSearchParams({ action: 'TEMPLATE', text: x.title, dates: `${g(s0)}/${g(s1)}`, ctz: S.cfg.timezone || 'Europe/Rome', details: x.details, location: x.location });
     const outlook = 'https://outlook.office.com/calendar/0/deeplink/compose?' + new URLSearchParams({ subject: x.title, startdt: s0.toISOString(), enddt: s1.toISOString(), location: x.location, body: x.details, path: '/calendar/action/compose', rru: 'addevent' });
     return { google, outlook };
@@ -460,7 +462,7 @@
     btn.onclick = async () => {
       if (!armed) { armed = true; btn.textContent = 'Conferma annullamento'; btn.classList.add('sure'); timer = setTimeout(() => { armed = false; btn.textContent = 'Annulla'; btn.classList.remove('sure'); }, 4000); return; }
       clearTimeout(timer); btn.disabled = true; btn.textContent = '…';
-      try { await rpc('cancel_my_booking', { p_id: b.id }); toast(`Lezione di ${fmtDay(b.date)} alle ${pad(b.hour)}:00 annullata`); after && after(); await refresh(); }
+      try { await rpc('cancel_my_booking', { p_id: b.id }); toast(`Lezione di ${fmtDay(b.date)} alle ${hm(b)} annullata`); after && after(); await refresh(); }
       catch (x) { toast(x.message); btn.disabled = false; armed = false; btn.textContent = 'Annulla'; btn.classList.remove('sure'); }
     };
     return btn;

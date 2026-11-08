@@ -201,6 +201,7 @@
     if (staff()) enableDrag(grid);
   }
 
+  const hm = (b, plus = 0) => `${pad(b.hour + plus)}:${pad(b.start_min || 0)}`;
   const who = (c) => [c.student_name || 'Allievo', ...(c.guests || []).map((g) => g.name)].join(' + ');
   /** la lezione non è ancora iniziata: si può spostare */
   const future = (date, hour) => { const [y, m, d] = date.split('-').map(Number); return new Date(y, m - 1, d, hour) > new Date(); };
@@ -209,7 +210,7 @@
     const own = !staff() && c.teacher_id === S.teacherId;
     const s = el('button', { class: 'slot booked' + (own ? ' own' : ''), type: 'button', style: `--tc:${t?.color || 'var(--muted)'}` },
       el('span', 'a', who(c)),
-      el('span', 'b', S.mode === 'sale' ? `${t?.name || ''}${c.note ? ' · ' + c.note : ''}` : `${r?.name || ''}${c.note ? ' · ' + c.note : ''}`));
+      el('span', 'b', [S.mode === 'sale' ? t?.name : r?.name, c.start_min ? `inizio ${hm(c)}` : '', c.note].filter(Boolean).join(' · ')));
     if (c.sync_error) s.append(el('span', { class: 'flag bad', title: c.sync_error }, '! cal'));
     else if (c.source !== 'app') s.append(el('span', 'flag', c.source === 'whatsapp' ? 'WA' : 'segr.'));
     s.onclick = () => { if (s.dataset.dragged) { delete s.dataset.dragged; return; } bookingDetails(c); };
@@ -264,7 +265,7 @@
       staff() ? el('dt', null, 'Prenotata da') : null,
       staff() ? el('dd', null, `${SRC[c.source] || c.source} · ${new Date(c.created_at).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })}`) : null,
       c.sync_error ? el('dt', null, 'Calendario') : null, c.sync_error ? el('dd', { style: 'color:var(--danger)' }, c.sync_error) : null);
-    const head = el('div', null, el('h3', null, `${r?.name || ''} · ${pad(c.hour)}:00`), el('div', 'meta', cap(fmtDay(S.day.date))));
+    const head = el('div', null, el('h3', null, `${r?.name || ''} · ${hm(c)}`), el('div', 'meta', cap(fmtDay(S.day.date))));
     if (!staff()) { openSheet(head, kv, el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'))); return; }
     const row = el('div', 'row');
     if (c.sync_error) row.append(el('button', { class: 'btn', type: 'button', onclick: async () => { await rpc('admin_resync', { p_id: c.booking_id }); toast('Nuovo tentativo avviato: controlla tra un minuto'); closeSheet(); viewAgenda(); } }, 'Riprova calendario'));
@@ -304,18 +305,25 @@
   function moveForm(c) {
     const date = el('input', { type: 'date', id: 'mv-date', value: S.day.date, min: S.status.today });
     const hour = hourSelect('mv-hour', c.hour, 6, 23);
+    const mins = el('select', { id: 'mv-min' }, ...[0, 15, 30, 45].map((m) => el('option', { value: m, selected: m === (c.start_min || 0) }, `:${pad(m)}`)));
     const room = el('select', { id: 'mv-room' }, ...activeRooms().map((r) => el('option', { value: r.id, selected: r.id === c.room_id }, r.name)));
     const teacher = el('select', { id: 'mv-t' }, ...activeTeachers().map((t) => el('option', { value: t.id, selected: t.id === c.teacher_id }, `${t.name} · ${t.style}`)));
     const err = el('div', 'err');
     const save = el('button', { class: 'btn primary', type: 'button' }, 'Sposta');
     save.onclick = async () => {
       err.textContent = ''; save.disabled = true;
-      try { await moveBooking(c, { date: date.value, hour: Number(hour.value), room_id: Number(room.value), teacher_id: Number(teacher.value) }, { quiet: true }); }
+      try {
+        const to = { date: date.value, hour: Number(hour.value), room_id: Number(room.value), teacher_id: Number(teacher.value) };
+        const m = Number(mins.value);
+        if (m !== (c.start_min || 0)) await rpc('admin_set_start_min', { p_id: c.booking_id, p_min: m });
+        if (to.date === S.day.date && to.hour === c.hour && to.room_id === c.room_id && to.teacher_id === c.teacher_id) { closeSheet(); toast(`Inizio alle ${pad(to.hour)}:${pad(m)}`); viewAgenda(); }
+        else await moveBooking(c, to, { quiet: true });
+      }
       catch (e) { err.textContent = e.message; } finally { save.disabled = false; }
     };
-    openSheet(el('div', null, el('h3', null, `Sposta la lezione di ${who(c)}`), el('div', 'meta', `Ora: ${cap(fmtDay(S.day.date))}, ${pad(c.hour)}:00 · ${roomById(c.room_id)?.name || ''}`)),
-      el('div', 'fields', field('Giorno', date), field('Ora', hour)), el('div', 'fields', field('Sala', room), field('Insegnante', teacher)),
-      el('div', 'muted small', 'L\'allievo riceve il nuovo orario su WhatsApp (se attivo) e l\'invito aggiornato nel calendario.'),
+    openSheet(el('div', null, el('h3', null, `Sposta la lezione di ${who(c)}`), el('div', 'meta', `Ora: ${cap(fmtDay(S.day.date))}, ${hm(c)} · ${roomById(c.room_id)?.name || ''}`)),
+      el('div', 'fields', field('Giorno', date), field('Ora', hour), field('Minuti', mins)), el('div', 'fields', field('Sala', room), field('Insegnante', teacher)),
+      el('div', 'muted small', 'La griglia resta a ore piene: con i minuti indichi l\'inizio esatto (es. 18:30). L\'allievo riceve il nuovo orario su WhatsApp (se attivo) e l\'invito aggiornato nel calendario.'),
       err, el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'), save));
   }
 
@@ -519,7 +527,7 @@
     if (!rows.length) { toast('Nessuna prenotazione da esportare con questi filtri'); return; }
     const esc = (v) => { const s = String(v ?? ''); return /[";\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; };
     const head = ['Data', 'Ora', 'Sala', 'Insegnante', 'Allievo', 'Telefono', 'Stato', 'Canale', 'Nota', 'Creata il'];
-    const lines = rows.map((r) => [r.date.split('-').reverse().join('/'), `${pad(r.hour)}:00`, r.room_name, r.teacher_name, r.student_name,
+    const lines = rows.map((r) => [r.date.split('-').reverse().join('/'), hm(r), r.room_name, r.teacher_name, r.student_name,
       phone(r.student_phone), r.status, SRC[r.source] || r.source, r.note, new Date(r.created_at).toLocaleString('it-IT')].map(esc).join(';'));
     const blob = new Blob(['﻿' + [head.join(';'), ...lines].join('\r\n')], { type: 'text/csv;charset=utf-8' });
     const a = el('a', { href: URL.createObjectURL(blob), download: `prenotazioni_${from}_${to}.csv` });
@@ -550,7 +558,7 @@
         const tb = el('tbody');
         for (const b of rows) {
           const tr = el('tr', b.status === 'annullata' ? 'cancelled' : '',
-            el('td', 'num', fmtShort(b.date)), el('td', 'num', `${pad(b.hour)}:00`), el('td', null, b.room_name), el('td', null, b.teacher_name),
+            el('td', 'num', fmtShort(b.date)), el('td', 'num', hm(b)), el('td', null, b.room_name), el('td', null, b.teacher_name),
             el('td', null, b.student_name || '—', el('div', 'muted small', phone(b.student_phone))), el('td', null, b.note || ''),
             el('td', null, el('span', 'pill', SRC[b.source] || b.source)),
             el('td', null, b.status === 'confermata'
