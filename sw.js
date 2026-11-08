@@ -1,5 +1,5 @@
 // Service worker: apre l'app anche con rete lenta; i dati (/api) arrivano sempre dal server.
-const CACHE = 'prenota-v2.6.0';
+const CACHE = 'prenota-v2.6.1';
 // percorsi relativi: l'app funziona anche in una sottocartella (es. GitHub Pages)
 const SHELL = ['./', 'style.css', 'app.js', 'config.js', 'vendor/supabase.js', 'manifest.webmanifest', 'icons/icon-192.png', 'logo.svg'];
 const HOME = new URL('./', self.location).href;
