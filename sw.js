@@ -1,5 +1,5 @@
 // Service worker: apre l'app anche con rete lenta; i dati (/api) arrivano sempre dal server.
-const CACHE = 'prenota-v3.2.0';
+const CACHE = 'prenota-v3.3.0';
 // configurazione Supabase (stesso file dell'app) per segnalare la ricezione delle notifiche
 try { self.window = self; importScripts('config.js'); } catch { /* facoltativo */ }
 // percorsi relativi: l'app funziona anche in una sottocartella (es. GitHub Pages)

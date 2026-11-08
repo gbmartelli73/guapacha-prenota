@@ -207,3 +207,5 @@ main{padding-bottom:88px}
 .powered img{height:23px;width:auto;background:#fff;border-radius:6px;padding:3px 6px;box-sizing:content-box}
 .credit .powered:hover span{color:var(--ink)}
 .sheet .powered{align-self:center;margin-top:6px}
+.confirmed-box{display:flex;flex-direction:column;gap:4px;padding:14px;border-radius:14px;background:color-mix(in srgb, var(--ok) 12%, var(--surface));border:1px solid color-mix(in srgb, var(--ok) 45%, transparent)}
+.confirmed-box b{color:var(--ok);font-size:17px}

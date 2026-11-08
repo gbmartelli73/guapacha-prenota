@@ -498,6 +498,38 @@
     if (['lezioni', 'profilo', 'tessera'].includes(h)) setTab(h);
     const m = /^giorno=(\d{4}-\d{2}-\d{2})$/.exec(h);
     if (m && m[1] >= S.cfg.today) { setTab('prenota'); S.sel = m[1]; S.week = monday(m[1]); await refresh(); }
+    const c = /^conferma=(\d+)$/.exec(h);
+    if (c) { history.replaceState(null, '', location.pathname + '#lezioni'); setTab('lezioni'); confirmSheet(Number(c[1])); }
+  }
+
+  // dalla notifica del promemoria: conferma, sposta o annulla in un tocco
+  async function confirmSheet(id) {
+    if (!S.me) { const ok = await loginFlow(); if (!ok) return; await refresh({ week: false, day: false }); }
+    const b = S.mine.upcoming.find((x) => x.id === id);
+    if (!b) { toast('Questa lezione non è più in programma'); return; }
+    const what = `${cap(fmtDay(b.date))} alle ${hm(b)} · ${b.room_name} con ${b.teacher_name}${b.note ? ' · ' + b.note : ''}`;
+    const done = el('div', 'confirmed-box');
+    const mk = (t, cls, fn) => { const x = el('button', cls, t); x.type = 'button'; x.onclick = fn; return x; };
+    const actions = () => [
+      mk('Sposta la lezione', 'btn block', () => { closeSheet(); startMove(b); }),
+      (() => { const x = cancelButton(b, () => closeSheet()); x.classList.add('block'); return x; })(),
+      mk('Aggiungi al calendario', 'btn block', () => calendarSheet(b)),
+    ];
+    if (b.confirmed) {
+      done.append(el('b', null, '✓ Presenza confermata'), el('span', null, 'Ti aspettiamo! Se cambia qualcosa puoi spostarla o annullarla.'));
+      openSheet([head('La tua lezione', what), done, ...actions()]);
+      return;
+    }
+    const ok = mk('Confermo, ci sarò', 'btn primary block', async () => {
+      ok.disabled = true;
+      try {
+        await rpc('confirm_my_booking', { p_id: b.id }); b.confirmed = true;
+        await refresh({ week: false, day: false });
+        done.append(el('b', null, '✓ Presenza confermata'), el('span', null, 'Grazie! La segreteria e l\'insegnante lo vedono subito.'));
+        openSheet([head('Confermata!', what), done, ...actions()]);
+      } catch (x) { toast(x.message); ok.disabled = false; }
+    });
+    openSheet([head('Confermi la lezione?', what), ok, ...actions()]);
   }
 
   // ---------------- lista d'attesa ----------------
