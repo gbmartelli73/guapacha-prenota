@@ -76,7 +76,7 @@
   }
   $('login-form').onsubmit = async (e) => {
     e.preventDefault(); $('lg-err').textContent = '';
-    const { error } = await sb.auth.signInWithPassword({ email: $('lg-user').value.trim(), password: $('lg-pass').value });
+    const { error } = await sb.auth.signInWithPassword({ email: ((u) => (u.includes('@') ? u : `${u}@guapacha.invalid`))($('lg-user').value.trim().toLowerCase()), password: $('lg-pass').value });
     if (error) { $('lg-err').textContent = error.status === 400 ? 'Email o password errate.' : 'Accesso non riuscito. Riprova.'; return; }
     $('lg-pass').value = '';
     try { await boot(); } catch (x) { $('lg-err').textContent = x.message; }

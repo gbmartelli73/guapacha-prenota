@@ -298,7 +298,8 @@
         const pw = el('a', 'powered'); pw.href = 'https://www.thinkdifferentsrl.it'; pw.target = '_blank'; pw.rel = 'noopener';
         const pwi = el('img'); pwi.src = 'thinkdifferent.svg'; pwi.alt = 'Think Different srl'; pwi.width = 62; pwi.height = 23;
         pw.append(el('span', null, 'Powered by'), pwi);
-        form.append(f, el('div', 'muted small', 'Ti mandiamo un codice di 6 cifre su WhatsApp.'), err, b, pw);
+        const alt = el('button', 'btn block', 'Hai email e password? Accedi così'); alt.type = 'button'; alt.onclick = () => { onClose = null; stepPassword(); };
+        form.append(f, el('div', 'muted small', 'Ti mandiamo un codice di 6 cifre su WhatsApp.'), err, b, alt, pw);
         form.onsubmit = async (e) => {
           e.preventDefault(); err.textContent = ''; b.disabled = true; b.textContent = 'Invio…';
           try {
@@ -309,6 +310,30 @@
           } catch (x) { err.textContent = x.message; b.disabled = false; b.textContent = 'Inviami il codice'; }
         };
         openSheet([head('Accedi', 'Per prenotare serve solo il numero di telefono.'), form], () => finish(false));
+      }
+      // accesso con email e password (dati consegnati dalla segreteria)
+      function stepPassword() {
+        const form = el('form'); form.style.cssText = 'display:flex;flex-direction:column;gap:14px';
+        const f1 = el('div', 'field'); const l1 = el('label', null, 'Email'); l1.htmlFor = 'l-email';
+        const e1 = el('input'); e1.type = 'email'; e1.id = 'l-email'; e1.autocomplete = 'username'; e1.required = true; f1.append(l1, e1);
+        const f2 = el('div', 'field'); const l2 = el('label', null, 'Password'); l2.htmlFor = 'l-pass';
+        const p2 = el('input'); p2.type = 'password'; p2.id = 'l-pass'; p2.autocomplete = 'current-password'; p2.required = true; f2.append(l2, p2);
+        const err = el('div', 'err');
+        const b = el('button', 'btn primary block', 'Entra'); b.type = 'submit';
+        const back = el('button', 'btn block', 'Entra con il cellulare'); back.type = 'button'; back.onclick = () => { onClose = null; stepPhone(); };
+        form.append(f1, f2, err, b, back);
+        form.onsubmit = async (e) => {
+          e.preventDefault(); err.textContent = ''; b.disabled = true;
+          try {
+            const { error } = await sb.auth.signInWithPassword({ email: e1.value.trim().toLowerCase(), password: p2.value });
+            if (error) throw new Error(/invalid|credentials/i.test(error.message) ? 'Email o password non corretti.' : authError(error, 'Accesso non riuscito. Riprova.'));
+            S.me = await rpc('me_update');
+            S.cfg = await rpc('public_config');
+            if (!S.me.name) stepName(); else { onClose = null; closeSheet(); await afterLogin(); finish(true); }
+          } catch (x) { err.textContent = x.message; b.disabled = false; }
+        };
+        onClose = null;
+        openSheet([head('Accedi con email', 'Usa l\'email e la password che ti ha dato la segreteria.'), form], () => finish(false));
       }
       function stepCode(phone) {
         const form = el('form'); form.style.cssText = 'display:flex;flex-direction:column;gap:14px';

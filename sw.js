@@ -1,5 +1,5 @@
 // Service worker: apre l'app anche con rete lenta; i dati (/api) arrivano sempre dal server.
-const VERSION = '3.5.0'; // uguale a version.js
+const VERSION = '3.6.0'; // uguale a version.js
 const CACHE = 'prenota-v' + VERSION;
 // configurazione Supabase (stesso file dell'app) per segnalare la ricezione delle notifiche
 try { self.window = self; importScripts('config.js'); } catch { /* facoltativo */ }

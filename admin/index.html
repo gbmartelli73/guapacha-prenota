@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Amministrazione · Guapacha Studio</title>
+<meta name="robots" content="noindex, nofollow">
+<link rel="icon" href="../logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="../segreteria/admin.css">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+<div id="login" class="login" hidden>
+  <form id="login-form" autocomplete="on">
+    <img src="../logo.svg" alt="Guapacha Studio" width="64" height="64" style="align-self:center">
+    <h1 style="text-align:center">Amministrazione</h1>
+    <div class="field"><label for="lg-user">Nome utente o email</label><input type="text" id="lg-user" autocomplete="username" autocapitalize="none" spellcheck="false" required></div>
+    <div class="field"><label for="lg-pass">Password</label><input type="password" id="lg-pass" autocomplete="current-password" required></div>
+    <div class="err" id="lg-err"></div>
+    <button class="btn primary" type="submit">Entra</button>
+    <a class="powered" href="https://www.thinkdifferentsrl.it" target="_blank" rel="noopener" style="align-self:center"><span>Powered by</span><img src="../thinkdifferent.svg" alt="Think Different srl" width="62" height="23"></a>
+  </form>
+</div>
+
+<div id="pwchange" class="login" hidden>
+  <form id="pw-form">
+    <h1>Scegli una nuova password</h1>
+    <p class="muted" style="margin:0">È il primo accesso con la password iniziale: per proteggere i dati della scuola scegli una password personale (almeno 8 caratteri).</p>
+    <div class="field"><label for="pw-new">Nuova password</label><input type="password" id="pw-new" autocomplete="new-password" minlength="8" required></div>
+    <div class="field"><label for="pw-new2">Ripeti la nuova password</label><input type="password" id="pw-new2" autocomplete="new-password" minlength="8" required></div>
+    <div class="err" id="pw-err"></div>
+    <button class="btn primary" type="submit">Salva e continua</button>
+    <button class="btn" type="button" id="pw-logout">Esci</button>
+  </form>
+</div>
+
+<div id="app" class="app" hidden>
+  <aside class="side">
+    <div class="brand-row"><img class="logo" src="../logo.svg" alt="" width="36" height="36"><div class="brand" id="brand">Guapacha Studio<span>Amministrazione</span></div></div>
+    <button class="nav" type="button" data-view="insights" aria-current="page">Insights</button>
+    <button class="nav" type="button" data-view="utenze">Utenze</button>
+    <a class="nav" href="../segreteria/" style="text-decoration:none">Apri la segreteria ↗</a>
+    <a class="nav" href="../" style="text-decoration:none">Apri l'app allievi ↗</a>
+    <button class="nav only-mobile" type="button" id="logout2">Esci</button>
+    <div class="foot"><div id="who" class="small"></div><button type="button" id="mypw">Cambia password</button> <button type="button" id="logout">Esci</button><a class="powered" href="https://www.thinkdifferentsrl.it" target="_blank" rel="noopener"><span>Powered by</span><img src="../thinkdifferent.svg" alt="Think Different srl" width="54" height="20"></a><div id="appver" style="margin-top:6px;font-size:11px"></div></div>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+
+<dialog id="dlg"><div class="sheet" id="sheet"></div></dialog>
+<div class="tip" id="tip" role="tooltip" hidden></div>
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+<script src="../vendor/supabase.js"></script>
+<script src="../version.js"></script>
+<script src="../config.js"></script>
+<script src="admin.js"></script>
+</body>
+</html>
