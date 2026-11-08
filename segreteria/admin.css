@@ -188,3 +188,6 @@ tr.hl td{background:color-mix(in srgb, var(--ok) 10%, var(--surface))}
 .pts-row{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
 .pts-big{font-size:32px;font-weight:800;color:var(--accent);line-height:1}
 .stat span{display:block}
+.powered{display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:inherit;opacity:.85;font-size:10.5px;letter-spacing:.08em;text-transform:uppercase;margin-top:10px}
+.powered img{height:20px;width:auto;background:#fff;border-radius:6px;padding:3px 6px;box-sizing:content-box}
+.login .powered{color:var(--muted);opacity:1}

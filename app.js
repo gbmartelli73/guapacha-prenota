@@ -295,7 +295,10 @@
         const i = el('input'); i.type = 'tel'; i.id = 'l-phone'; i.autocomplete = 'tel'; i.placeholder = '+39 333 123 4567'; i.required = true; f.append(l, i);
         const err = el('div', 'err');
         const b = el('button', 'btn primary block', 'Inviami il codice'); b.type = 'submit';
-        form.append(f, el('div', 'muted small', 'Ti mandiamo un codice di 6 cifre su WhatsApp.'), err, b);
+        const pw = el('a', 'powered'); pw.href = 'https://www.thinkdifferentsrl.it'; pw.target = '_blank'; pw.rel = 'noopener';
+        const pwi = el('img'); pwi.src = 'thinkdifferent.svg'; pwi.alt = 'Think Different srl'; pwi.width = 62; pwi.height = 23;
+        pw.append(el('span', null, 'Powered by'), pwi);
+        form.append(f, el('div', 'muted small', 'Ti mandiamo un codice di 6 cifre su WhatsApp.'), err, b, pw);
         form.onsubmit = async (e) => {
           e.preventDefault(); err.textContent = ''; b.disabled = true; b.textContent = 'Invio…';
           try {

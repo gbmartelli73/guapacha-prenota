@@ -203,3 +203,7 @@ a.btn.primary{color:var(--accent-ink)}
 .chatform input{flex:1;min-width:0}
 main{padding-bottom:88px}
 .bk .what .chip-btn,.bk .what .ok-chip,.bk .what .pts{display:block;width:fit-content}
+.powered{display:inline-flex;align-items:center;gap:8px;text-decoration:none;color:var(--muted);font-size:11px;letter-spacing:.08em;text-transform:uppercase}
+.powered img{height:23px;width:auto;background:#fff;border-radius:6px;padding:3px 6px;box-sizing:content-box}
+.credit .powered:hover span{color:var(--ink)}
+.sheet .powered{align-self:center;margin-top:6px}
