@@ -159,7 +159,7 @@ body.is-dragging [data-drop]{border-style:dashed;border-color:color-mix(in srgb,
 .slot.drop-over{outline:2px solid var(--accent);outline-offset:1px;background:color-mix(in srgb, var(--accent) 14%, var(--surface))!important}
 
 /* area insegnanti: sola lettura */
-body.teacher .nav[data-view]:not([data-view="agenda"]){display:none}
+body.teacher .nav[data-view]:not([data-view="agenda"]):not([data-view="disponibilita"]){display:none}
 .slot.ro{cursor:default}
 .slot.ro:hover{border-color:var(--line)}
 .slot.booked.own{border-width:2px;border-left-width:6px;font-weight:600}

@@ -120,17 +120,31 @@
     const [v, qs] = location.hash.slice(1).split('?');
     const q = new URLSearchParams(qs || '').get('q');
     if (q) S.students.q = q;   // dal QR della tessera: #allievi?q=GS-0001
-    go(staff() && VIEWS.includes(v) ? v : 'agenda');
+    go((staff() ? VIEWS : TEACHER_VIEWS).includes(v) ? v : 'agenda');
   }
 
-  const VIEWS = ['agenda', 'occupazione', 'attesa', 'prenotazioni', 'allievi', 'blocchi', 'impostazioni'];
+  const TEACHER_VIEWS = ['agenda', 'disponibilita'];
+  const VIEWS = ['agenda', 'disponibilita', 'occupazione', 'attesa', 'prenotazioni', 'allievi', 'blocchi', 'impostazioni'];
   function go(view) {
-    if (!staff()) view = 'agenda';
+    if (!staff() && !TEACHER_VIEWS.includes(view)) view = 'agenda';
     S.view = view; if (location.hash.slice(1) !== view) history.replaceState(null, '', '#' + view);
     document.querySelectorAll('.nav').forEach((b) => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
-    ({ agenda: viewAgenda, occupazione: viewOccupancy, attesa: viewWaitlist, prenotazioni: viewList, allievi: viewStudents, blocchi: viewBlocks, impostazioni: viewSettings })[view]();
+    ({ agenda: viewAgenda, occupazione: viewOccupancy, attesa: viewWaitlist, prenotazioni: viewList, allievi: viewStudents, blocchi: viewBlocks, impostazioni: viewSettings, disponibilita: viewAvailability })[view]();
   }
   document.querySelectorAll('.nav').forEach((b) => (b.onclick = () => go(b.dataset.view)));
+
+  // ================= DISPONIBILITÀ =================
+  async function viewAvailability(teacherId = null) {
+    const main = $('main');
+    const box = el('div', { style: 'display:flex;flex-direction:column;gap:16px' });
+    main.replaceChildren(el('div', 'toolbar', el('h1', null, staff() ? 'Disponibilità degli insegnanti' : 'La mia disponibilità')), box);
+    if (staff()) {
+      const ch = await window.Disponibilita.changesCard({ rpc, onOpen: (id) => viewAvailability(id) });
+      if (ch) main.insertBefore(ch, box);
+    }
+    await window.Disponibilita.mount(box, { rpc, toast, teacherId: staff() ? (teacherId ?? S.availTeacher ?? null) : null });
+    const sel = $('av-teacher'); if (sel) { S.availTeacher = Number(sel.value); sel.addEventListener('change', () => (S.availTeacher = Number(sel.value))); }
+  }
 
   // ================= AGENDA =================
   async function viewAgenda() {
@@ -155,7 +169,7 @@
         el('span', null, el('i', { class: 'dot', style: '--tc:var(--ok)' }), 'Libera: clic per prenotare a nome di un allievo'),
         el('span', null, el('i', { class: 'dot', style: '--tc:var(--muted)' }), '— nessun insegnante in turno (clic per forzare)'),
         el('span', null, 'Clic sul nome di una sala o di un insegnante per rinominarlo'))
-      : el('div', 'legend', el('span', null, 'Le tue lezioni hanno il bordo spesso. Per modifiche contatta la segreteria.')));
+      : el('div', 'legend', el('span', null, 'Le tue lezioni hanno il bordo spesso. Per spostare una lezione contatta la segreteria; turni e assenze li gestisci da "Disponibilità".')));
     try {
       const ws = monday(S.date);
       const [day, week] = await Promise.all([rpc(staff() ? 'admin_day' : 'teacher_day', { p_date: S.date }), rpc(staff() ? 'admin_week' : 'teacher_week', { p_start: ws })]);

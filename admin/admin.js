@@ -150,10 +150,10 @@
   addEventListener('hashchange', () => S.me && route());
   function route() {
     const v = location.hash.slice(1) || 'insights';
-    S.view = ['insights', 'utenze', 'sale', 'insegnanti'].includes(v) ? v : 'insights';
+    S.view = ['insights', 'utenze', 'sale', 'insegnanti', 'disponibilita'].includes(v) ? v : 'insights';
     document.querySelectorAll('.nav[data-view]').forEach((b) => b.setAttribute('aria-current', b.dataset.view === S.view ? 'page' : 'false'));
     tip.hidden = true;
-    ({ utenze: viewUsers, sale: viewRooms, insegnanti: viewTeachers }[S.view] || viewInsights)();
+    ({ utenze: viewUsers, sale: viewRooms, insegnanti: viewTeachers, disponibilita: viewAvailability }[S.view] || viewInsights)();
   }
   const main = $('main');
   const loading = (t) => main.replaceChildren(el('div', 'toolbar', el('h1', null, t)), el('p', 'muted', 'Carico…'));
@@ -623,11 +623,21 @@
         } }, 'Crea accesso'));
       return el('div', { class: 'card', style: t.id && !t.active ? 'opacity:.7' : '' },
         el('div', 'shift', col, n, st, ph, el('label', 'check', act, 'Attivo')),
-        el('div', 'label', t.id ? `Turni settimanali · ${hours} ore` : 'Turni settimanali'), sBox, access, el('div', 'row', save));
+        el('div', 'label', t.id ? `Turni settimanali · ${hours} ore` : 'Turni settimanali'), sBox, access,
+        el('div', 'row', t.id ? el('button', { class: 'btn', type: 'button', onclick: () => { S.availTeacher = t.id; location.hash = 'disponibilita'; } }, 'Assenze e disponibilità extra') : null, save));
     };
     main.replaceChildren(el('div', 'toolbar', el('h1', null, 'Insegnanti'), el('span', 'grow'), el('span', 'muted small', 'Il colore è quello usato in agenda; i turni decidono quando l\'insegnante è prenotabile.')),
       ...teachers.map(editor),
       el('details', null, el('summary', { class: 'btn primary', style: 'display:inline-flex' }, '+ Nuovo insegnante'), el('div', { style: 'margin-top:10px' }, editor({ shifts: [] }))));
+  }
+
+  // ================================================================ DISPONIBILITÀ
+  async function viewAvailability(teacherId = null) {
+    const box = el('div', { style: 'display:flex;flex-direction:column;gap:16px' });
+    main.replaceChildren(el('div', 'toolbar', el('h1', null, 'Disponibilità degli insegnanti')), box);
+    const ch = await window.Disponibilita.changesCard({ rpc, onOpen: (id) => { S.availTeacher = id; viewAvailability(id); } });
+    if (ch) main.insertBefore(ch, box);
+    await window.Disponibilita.mount(box, { rpc, toast, teacherId: teacherId ?? S.availTeacher ?? null });
   }
 
   // ---------------- avvio ----------------
