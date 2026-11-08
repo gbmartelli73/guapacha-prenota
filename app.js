@@ -170,9 +170,13 @@
     const what = el('div', 'what');
     const title = el('b'); const dot = el('i', 'dot'); dot.style.setProperty('--tc', b.teacher_color || 'var(--muted)');
     title.append(dot, `${b.room_name} con ${b.teacher_name}`);
-    what.append(title, el('span', null, b.status === 'annullata' ? 'Annullata' : (b.note || b.teacher_style)));
+    const extra = [guestNames(b.guests) && `con ${guestNames(b.guests)}`, b.note || b.teacher_style].filter(Boolean).join(' · ');
+    what.append(title, el('span', null, b.status === 'annullata' ? 'Annullata' : extra));
     row.append(when, what);
-    if (!past) row.append(cancelButton(b));
+    if (!past) {
+      const cal = el('button', 'btn', 'Calendario'); cal.type = 'button'; cal.onclick = () => calendarSheet(b);
+      const acts = el('div', 'acts'); acts.append(cal, cancelButton(b)); row.append(acts);
+    }
     return row;
   }
 
@@ -205,16 +209,24 @@
       const f1 = el('div', 'field'); const l1 = el('label', null, 'Nome e cognome'); l1.htmlFor = 'p-name';
       const i1 = el('input'); i1.type = 'text'; i1.id = 'p-name'; i1.autocomplete = 'name'; i1.value = S.me.name || ''; f1.append(l1, i1);
       const f2 = el('div', 'field'); f2.append(el('label', null, 'Telefono'), el('div', 'muted', S.me.phone));
+      const fe = el('div', 'field'); const le = el('label', null, 'Email (facoltativa)'); le.htmlFor = 'p-email';
+      const ie = el('input'); ie.type = 'email'; ie.id = 'p-email'; ie.autocomplete = 'email'; ie.value = S.me.email || ''; ie.placeholder = 'Per ricevere l\'invito nel calendario';
+      fe.append(le, ie);
       const ck = el('label', 'check'); const i3 = el('input'); i3.type = 'checkbox'; i3.id = 'p-wa'; i3.checked = !!S.me.wa_consent;
       ck.append(i3, el('span', null, 'Ricevi conferme, promemoria e avvisi di annullamento su WhatsApp'));
       const err = el('div', 'err');
       const save = el('button', 'btn primary', 'Salva'); save.type = 'submit';
       const out = el('button', 'btn', 'Esci'); out.type = 'button';
       const row = el('div', 'row'); row.append(out, save);
-      c.append(f1, f2, ck, err, row);
+      c.append(f1, f2, fe, ck, err, row);
       c.onsubmit = async (e) => {
         e.preventDefault(); err.textContent = ''; save.disabled = true;
-        try { S.me = await rpc('me_update', { p_name: i1.value, p_wa_consent: i3.checked }); toast('Profilo salvato'); renderAccount(); }
+        try {
+          const email = ie.value.trim();
+          S.me = await rpc('me_update', { p_name: i1.value, p_wa_consent: i3.checked });
+          S.me.email = (await rpc('me_save_email', { p_email: email })).email;
+          toast('Profilo salvato'); renderAccount();
+        }
         catch (x) { err.textContent = x.message; } finally { save.disabled = false; }
       };
       out.onclick = async () => { await sb.auth.signOut().catch(() => {}); S.me = null; S.mine = { upcoming: [], past: [] }; await refresh(); setTab('prenota'); toast('Sei uscito'); };
@@ -337,6 +349,16 @@
       const n = el('span'); n.append(el('b', null, t.name), document.createTextNode(` · ${t.style}`));
       o.append(r, dot, n); opts.append(o);
     }
+    // partecipante (lezione di coppia) ed eventuale email per l'invito
+    const pf = el('details', 'partner');
+    const ps = el('summary', null, '+ Partecipa anche un\'altra persona'); pf.append(ps);
+    const pn = el('input'); pn.type = 'text'; pn.id = 'b-gname'; pn.placeholder = 'Nome'; pn.autocomplete = 'off'; pn.setAttribute('aria-label', 'Nome del partecipante');
+    const pe = el('input'); pe.type = 'email'; pe.id = 'b-gemail'; pe.placeholder = 'Email (riceve l\'invito)'; pe.autocomplete = 'off'; pe.setAttribute('aria-label', 'Email del partecipante');
+    const pw = el('div', 'pair'); pw.append(pn, pe); pf.append(pw);
+    let myEmail = null;
+    if (!S.me?.email) {
+      myEmail = el('input'); myEmail.type = 'email'; myEmail.id = 'b-myemail'; myEmail.autocomplete = 'email'; myEmail.placeholder = 'tu@esempio.it';
+    }
     const nf = el('div', 'field'); const nl = el('label', null, 'Nota per l\'insegnante (facoltativa)'); nl.htmlFor = 'b-note';
     const ta = el('textarea'); ta.id = 'b-note'; ta.maxLength = 200; ta.placeholder = 'Es. livello principiante, coreografia per il saggio…'; nf.append(nl, ta);
     const err = el('div', 'err');
@@ -345,14 +367,24 @@
       const sel = sheet.querySelector('input[name="inst"]:checked'); if (!sel) { err.textContent = 'Scegli un insegnante.'; return; }
       b.disabled = true; b.textContent = 'Prenotazione…'; err.textContent = '';
       try {
+        if (pe.value.trim() && !pn.value.trim()) throw new Error('Scrivi il nome di chi partecipa.');
+        if (myEmail && myEmail.value.trim()) S.me.email = (await rpc('me_save_email', { p_email: myEmail.value })).email;
         const r = await rpc('book', { p_date: S.sel, p_hour: cell.hour, p_room_id: room.id, p_teacher_id: Number(sel.value), p_note: ta.value.trim() });
-        closeSheet(); toast(`Prenotato: ${r.room}, ${fmtDay(r.date)} alle ${pad(r.hour)}:00 con ${r.teacher}`);
+        let guests = [];
+        if (pn.value.trim()) {
+          try { guests = await rpc('set_booking_guests', { p_id: r.id, p_guests: [{ name: pn.value, email: pe.value }] }); }
+          catch (x) { toast(`Lezione prenotata, ma il partecipante non è stato salvato: ${x.message}`); }
+        }
         await refresh();
+        const t = T()[Number(sel.value)];
+        bookedSheet({ id: r.id, date: r.date, hour: r.hour, room_name: r.room, teacher_name: r.teacher, teacher_style: t?.style, guests, note: ta.value.trim() });
       } catch (x) { err.textContent = x.message; b.disabled = false; b.textContent = 'Conferma prenotazione'; refresh({ mine: false }); }
     };
     openSheet([
       head(`${room.name} · ${pad(cell.hour)}:00`, `${cap(fmtDay(S.sel))} · ${pad(cell.hour)}:00–${pad(cell.hour + 1)}:00 · ${room.info}`),
-      el('div', 'label', 'Con chi vuoi fare lezione?'), opts, nf, err, b,
+      el('div', 'label', 'Con chi vuoi fare lezione?'), opts, pf,
+      ...(myEmail ? [(() => { const f = el('div', 'field'); const l = el('label', null, 'La tua email, per ricevere la lezione nel calendario (facoltativa)'); l.htmlFor = 'b-myemail'; f.append(l, myEmail); return f; })()] : []),
+      nf, err, b,
       el('div', 'muted small', `Puoi annullare dall'app fino a ${S.cfg.cancel_hours} ore prima.${S.me?.wa_consent && S.cfg.whatsapp ? ' Riceverai la conferma su WhatsApp.' : ''}`),
     ]);
   }
@@ -360,12 +392,68 @@
   function openMine(cell, room, t) {
     const dl = el('div', 'card'); dl.style.padding = '12px';
     dl.append(el('div', null, `Insegnante: ${t ? `${t.name} · ${t.style}` : '—'}`));
+    if (guestNames(cell.guests)) dl.append(el('div', null, `Partecipa anche: ${guestNames(cell.guests)}`));
     if (cell.note) dl.append(el('div', 'muted small', `Nota: ${cell.note}`));
-    const b = { id: cell.booking_id, date: S.sel, hour: cell.hour };
+    const b = { id: cell.booking_id, date: S.sel, hour: cell.hour, room_name: room.name, teacher_name: t?.name || '', teacher_style: t?.style, guests: cell.guests, note: cell.note };
     const row = el('div', 'row'); const close = el('button', 'btn', 'Chiudi'); close.type = 'button'; close.onclick = closeSheet;
-    row.append(cancelButton(b, closeSheet), close);
+    const cal = el('button', 'btn', 'Calendario'); cal.type = 'button'; cal.onclick = () => calendarSheet(b);
+    row.append(cancelButton(b, closeSheet), cal, close);
     openSheet([head(`${room.name} · ${pad(cell.hour)}:00`, `${cap(fmtDay(S.sel))} · la tua lezione`), dl, row]);
   }
+
+  const guestNames = (g) => (g || []).map((x) => x.name).filter(Boolean).join(', ');
+
+  // ---------------- calendario personale ----------------
+  const ROME_TZ = ['BEGIN:VTIMEZONE', 'TZID:Europe/Rome', 'BEGIN:DAYLIGHT', 'TZOFFSETFROM:+0100', 'TZOFFSETTO:+0200', 'TZNAME:CEST',
+    'DTSTART:19700329T020000', 'RRULE:FREQ=YEARLY;BYMONTH=3;BYDAY=-1SU', 'END:DAYLIGHT', 'BEGIN:STANDARD', 'TZOFFSETFROM:+0200',
+    'TZOFFSETTO:+0100', 'TZNAME:CET', 'DTSTART:19701025T030000', 'RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU', 'END:STANDARD', 'END:VTIMEZONE'];
+  function lessonText(b) {
+    const title = `${S.cfg.lesson_label || 'Lezione'} con ${b.teacher_name} · ${S.cfg.school}`;
+    const details = [`${b.room_name} · ${pad(b.hour)}:00–${pad(b.hour + 1)}:00`, guestNames(b.guests) && `Partecipa anche: ${guestNames(b.guests)}`, b.note && `Nota: ${b.note}`].filter(Boolean).join('\n');
+    return { title, details, location: `${S.cfg.school} — ${b.room_name}` };
+  }
+  /** File .ics con l'avviso prima della lezione (lo leggono Outlook, Google, iPhone e Android). */
+  function icsFor(b) {
+    const tz = S.cfg.timezone || 'Europe/Rome', d = b.date.replace(/-/g, ''), alarm = Number(S.cfg.cal_alarm_minutes ?? 120);
+    const esc = (v) => String(v || '').replace(/\\/g, '\\\\').replace(/\n/g, '\\n').replace(/([,;])/g, '\\$1');
+    const now = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '');
+    const x = lessonText(b);
+    return ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Prenota//Lezioni//IT', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
+      ...(tz === 'Europe/Rome' ? ROME_TZ : []),
+      'BEGIN:VEVENT', `UID:lezione-${b.id}@prenota`, `DTSTAMP:${now}`,
+      `DTSTART;TZID=${tz}:${d}T${pad(b.hour)}0000`, `DTEND;TZID=${tz}:${d}T${pad(b.hour + 1)}0000`,
+      `SUMMARY:${esc(x.title)}`, `LOCATION:${esc(x.location)}`, `DESCRIPTION:${esc(x.details)}`,
+      ...(alarm > 0 ? ['BEGIN:VALARM', 'ACTION:DISPLAY', `DESCRIPTION:${esc(x.title)}`, `TRIGGER:-PT${alarm}M`, 'END:VALARM'] : []),
+      'END:VEVENT', 'END:VCALENDAR'].join('\r\n');
+  }
+  function downloadIcs(b) {
+    const ics = icsFor(b), name = `lezione-${b.date}-${pad(b.hour)}.ics`;
+    if (/iphone|ipad|ipod/i.test(navigator.userAgent)) { location.href = 'data:text/calendar;charset=utf-8,' + encodeURIComponent(ics); return; }
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([ics], { type: 'text/calendar;charset=utf-8' })); a.download = name;
+    document.body.append(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1500);
+  }
+  function calLinks(b) {
+    const x = lessonText(b), [y, m, d] = b.date.split('-').map(Number);
+    const s0 = new Date(y, m - 1, d, b.hour), s1 = new Date(y, m - 1, d, b.hour + 1);
+    const g = (dt) => `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}T${pad(dt.getHours())}0000`;
+    const google = 'https://calendar.google.com/calendar/render?' + new URLSearchParams({ action: 'TEMPLATE', text: x.title, dates: `${g(s0)}/${g(s1)}`, ctz: S.cfg.timezone || 'Europe/Rome', details: x.details, location: x.location });
+    const outlook = 'https://outlook.office.com/calendar/0/deeplink/compose?' + new URLSearchParams({ subject: x.title, startdt: s0.toISOString(), enddt: s1.toISOString(), location: x.location, body: x.details, path: '/calendar/action/compose', rru: 'addevent' });
+    return { google, outlook };
+  }
+  function calendarSheet(b, title = 'Aggiungi al calendario') {
+    const alarm = Number(S.cfg.cal_alarm_minutes ?? 120);
+    const when = alarm >= 60 && alarm % 60 === 0 ? `${alarm / 60} ${alarm === 60 ? 'ora' : 'ore'}` : `${alarm} minuti`;
+    const links = calLinks(b);
+    const ics = el('button', 'btn primary block', 'Calendario del telefono o Outlook (con avviso)'); ics.type = 'button'; ics.onclick = () => downloadIcs(b);
+    const mk = (href, txt) => { const a = el('a', 'btn block', txt); a.href = href; a.target = '_blank'; a.rel = 'noopener'; return a; };
+    const close = el('button', 'btn block', 'Chiudi'); close.type = 'button'; close.onclick = closeSheet;
+    const x = lessonText(b);
+    openSheet([head(title, `${cap(fmtDay(b.date))} · ${x.details.split('\n')[0]}`),
+      ...(guestNames(b.guests) ? [el('div', null, `Partecipa anche: ${guestNames(b.guests)}`)] : []),
+      ics, el('div', 'muted small', alarm > 0 ? `Il calendario ti avvisa ${when} prima.` : ''),
+      mk(links.google, 'Google Calendar'), mk(links.outlook, 'Outlook sul web'), close]);
+  }
+  function bookedSheet(b) { calendarSheet(b, 'Prenotato!'); }
 
   function cancelButton(b, after) {
     const btn = el('button', 'btn danger', 'Annulla'); btn.type = 'button'; let armed = false, timer;

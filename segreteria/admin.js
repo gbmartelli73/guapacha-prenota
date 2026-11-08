@@ -29,7 +29,8 @@
   /** indirizzo dell'app allievi: la cartella sopra /segreteria/ */
   const appRoot = () => new URL('../', location.href).href;
 
-  const S = { status: null, rooms: [], teachers: [], view: 'agenda', date: null, mode: 'sale', day: null, week: [], list: { q: '' }, students: { q: '' } };
+  const S = { role: null, teacherId: null, status: null, rooms: [], teachers: [], view: 'agenda', date: null, mode: 'sale', day: null, week: [], list: { q: '' }, students: { q: '' } };
+  const staff = () => S.role === 'staff';
 
   // ---------------- Supabase ----------------
   const C = window.SCUOLA_CONFIG || {};
@@ -41,7 +42,7 @@
     const { data, error } = await sb.rpc(fn, args);
     if (error) {
       if (error.code === 'PGRST301' || /JWT/.test(error.message || '')) { showLogin(); throw new Error('Sessione scaduta: accedi di nuovo.'); }
-      if (error.code === 'P0001' && /riservato alla segreteria/.test(error.message)) { showLogin('Questo account non è abilitato alla segreteria.'); }
+      if (error.code === 'P0001' && /^Accesso riservato/.test(error.message)) { showLogin('Questo account non è abilitato: chiedi alla segreteria.'); }
       throw new Error(error.code === 'P0001' ? error.message : 'Operazione non riuscita. Controlla la connessione e riprova.');
     }
     return data;
@@ -83,6 +84,14 @@
   $('logout').onclick = $('logout2').onclick = async () => { await sb.auth.signOut().catch(() => {}); showLogin(); };
 
   async function loadBase() {
+    if (!staff()) {
+      const b = await rpc('teacher_base');
+      S.status = { school: b.school, today: b.today }; S.rooms = b.rooms; S.teachers = b.teachers;
+      $('brand').firstChild.textContent = b.school; $('brand').lastChild.textContent = `Insegnante · ${teacherById(b.teacher_id)?.name || ''}`;
+      document.title = `Agenda · ${b.school}`;
+      $('integr').replaceChildren();
+      return;
+    }
     [S.status, S.rooms, S.teachers] = await Promise.all([rpc('admin_status'), rpc('admin_rooms'), rpc('admin_teachers')]);
     $('brand').firstChild.textContent = S.status.school;
     document.title = `Segreteria · ${S.status.school}`;
@@ -100,14 +109,20 @@
   async function boot() {
     const { data } = await sb.auth.getSession();
     if (!data.session) { showLogin(); return; }
+    let me;
+    try { me = await rpc('my_role'); } catch (e) { showLogin(e.message); return; }
+    if (!me.role) { showLogin('Questo account non è abilitato: chiedi alla segreteria.'); return; }
+    S.role = me.role; S.teacherId = me.teacher_id || null;
+    document.body.classList.toggle('teacher', !staff());
     try { await loadBase(); } catch (e) { showLogin(e.message); return; }
     $('login').hidden = true; $('app').hidden = false;
     S.date ||= S.status.today;
     const v = location.hash.slice(1);
-    go(['agenda', 'prenotazioni', 'allievi', 'blocchi', 'impostazioni'].includes(v) ? v : 'agenda');
+    go(staff() && ['agenda', 'prenotazioni', 'allievi', 'blocchi', 'impostazioni'].includes(v) ? v : 'agenda');
   }
 
   function go(view) {
+    if (!staff()) view = 'agenda';
     S.view = view; if (location.hash.slice(1) !== view) history.replaceState(null, '', '#' + view);
     document.querySelectorAll('.nav').forEach((b) => { if (b.dataset.view === view) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
     ({ agenda: viewAgenda, prenotazioni: viewList, allievi: viewStudents, blocchi: viewBlocks, impostazioni: viewSettings })[view]();
@@ -129,16 +144,18 @@
         el('button', { class: 'btn', type: 'button', onclick: () => { S.date = S.status.today; viewAgenda(); } }, 'Oggi'),
         el('button', { class: 'btn icon', type: 'button', 'aria-label': 'Giorno successivo', onclick: () => { S.date = addDays(S.date, 1); viewAgenda(); } }, '›'),
         dateIn, seg,
-        el('button', { class: 'btn', type: 'button', onclick: () => blockForm({ date: S.date }) }, 'Blocca orario')),
+        staff() ? el('button', { class: 'btn', type: 'button', onclick: () => blockForm({ date: S.date }) }, 'Blocca orario') : null),
       el('div', { id: 'ag-week', class: 'days' }), el('div', { id: 'ag-stats', class: 'stats' }),
       el('div', { id: 'ag-board', class: 'scroll' }, el('div', 'closedday', 'Caricamento…')),
-      el('div', 'legend',
+      staff() ? el('div', 'legend',
+        el('span', null, el('b', null, 'Trascina'), ' una lezione su un\'altra casella per spostarla (sul telefono: tieni premuto)'),
         el('span', null, el('i', { class: 'dot', style: '--tc:var(--ok)' }), 'Libera: clic per prenotare a nome di un allievo'),
         el('span', null, el('i', { class: 'dot', style: '--tc:var(--muted)' }), '— nessun insegnante in turno (clic per forzare)'),
-        el('span', null, 'Bordo colorato = insegnante')));
+        el('span', null, 'Clic sul nome di una sala o di un insegnante per rinominarlo'))
+      : el('div', 'legend', el('span', null, 'Le tue lezioni hanno il bordo spesso. Per modifiche contatta la segreteria.')));
     try {
       const ws = monday(S.date);
-      const [day, week] = await Promise.all([rpc('admin_day', { p_date: S.date }), rpc('admin_week', { p_start: ws })]);
+      const [day, week] = await Promise.all([rpc(staff() ? 'admin_day' : 'teacher_day', { p_date: S.date }), rpc(staff() ? 'admin_week' : 'teacher_week', { p_start: ws })]);
       S.day = day; S.week = week;
       renderWeekStrip(); renderStats(); renderBoard();
     } catch (e) { $('ag-board').replaceChildren(el('div', 'closedday', e.message)); }
@@ -170,71 +187,266 @@
     const grid = el('div', 'agenda'); grid.style.setProperty('--cols', cols.length);
     grid.append(el('div'));
     for (const c of cols) {
-      if (S.mode === 'sale') grid.append(el('div', 'colh', el('b', null, c.name), el('span', null, c.info)));
-      else grid.append(el('div', 'colh', el('b', null, el('i', { class: 'dot', style: `--tc:${c.color}` }), c.name), el('span', null, c.style)));
+      const inner = S.mode === 'sale' ? [el('b', null, c.name), el('span', null, c.info)]
+        : [el('b', null, el('i', { class: 'dot', style: `--tc:${c.color}` }), c.name), el('span', null, c.style)];
+      grid.append(staff()
+        ? el('button', { class: 'colh edit', type: 'button', title: 'Rinomina', onclick: () => (S.mode === 'sale' ? renameRoom(c.id) : renameTeacher(c.id)) }, ...inner)
+        : el('div', 'colh', ...inner));
     }
     for (const h of g.hours) {
       grid.append(el('div', 'time', `${pad(h)}:00`));
       for (const col of cols) grid.append(S.mode === 'sale' ? roomSlot(g, h, col) : teacherSlot(g, h, col));
     }
     board.replaceChildren(grid);
+    if (staff()) enableDrag(grid);
   }
 
+  const who = (c) => [c.student_name || 'Allievo', ...(c.guests || []).map((g) => g.name)].join(' + ');
+  /** la lezione non è ancora iniziata: si può spostare */
+  const future = (date, hour) => { const [y, m, d] = date.split('-').map(Number); return new Date(y, m - 1, d, hour) > new Date(); };
   function bookedSlot(c) {
     const t = teacherById(c.teacher_id), r = roomById(c.room_id);
-    const s = el('button', { class: 'slot booked', type: 'button', style: `--tc:${t?.color || 'var(--muted)'}` },
-      el('span', 'a', c.student_name || 'Allievo'),
+    const own = !staff() && c.teacher_id === S.teacherId;
+    const s = el('button', { class: 'slot booked' + (own ? ' own' : ''), type: 'button', style: `--tc:${t?.color || 'var(--muted)'}` },
+      el('span', 'a', who(c)),
       el('span', 'b', S.mode === 'sale' ? `${t?.name || ''}${c.note ? ' · ' + c.note : ''}` : `${r?.name || ''}${c.note ? ' · ' + c.note : ''}`));
     if (c.sync_error) s.append(el('span', { class: 'flag bad', title: c.sync_error }, '! cal'));
     else if (c.source !== 'app') s.append(el('span', 'flag', c.source === 'whatsapp' ? 'WA' : 'segr.'));
-    s.onclick = () => bookingDetails(c);
+    s.onclick = () => { if (s.dataset.dragged) { delete s.dataset.dragged; return; } bookingDetails(c); };
+    if (staff() && future(S.day.date, c.hour)) { s.dataset.bid = c.booking_id; s.classList.add('draggable'); }
     return s;
   }
+  /** caselle su cui si può lasciare una lezione: libere o senza insegnante, non passate né bloccate */
+  const dropAttrs = (h, extra) => (staff() ? { 'data-drop': '1', 'data-hour': h, ...extra } : {});
   function roomSlot(g, h, room) {
     const c = g.cells.find((x) => x.hour === h && x.room_id === room.id);
     if (c.status === 'booked') return bookedSlot(c);
     if (c.status === 'blocked') {
       const b = g.blocks.find((x) => x.id === c.block_id);
-      return el('button', { class: 'slot blocked', type: 'button', onclick: () => blockDetails(b) }, el('span', 'a', c.title), el('span', 'b', b?.teacher_name || ''));
+      return el(staff() ? 'button' : 'div', { class: 'slot blocked', type: staff() ? 'button' : null, onclick: staff() ? () => blockDetails(b) : null }, el('span', 'a', c.title), el('span', 'b', b?.teacher_name || ''));
     }
     if (c.status === 'past') return el('div', 'slot off', el('span', 'a', 'Passata'));
     if (c.status === 'free') {
       const names = c.teachers.map((id) => teacherById(id)?.name).filter(Boolean);
-      return el('button', { class: 'slot free', type: 'button', onclick: () => bookingForm({ date: g.date, hour: h, room_id: room.id }) },
+      if (!staff()) return el('div', 'slot free ro', el('span', 'a', 'Libera'), el('span', 'b', names.join(', ')));
+      return el('button', { class: 'slot free', type: 'button', ...dropAttrs(h, { 'data-room': room.id }), onclick: () => bookingForm({ date: g.date, hour: h, room_id: room.id }) },
         el('span', 'a', 'Libera'), el('span', 'b', names.join(', ')));
     }
-    return el('button', { class: 'slot off clickable', type: 'button', title: 'Nessun insegnante in turno', onclick: () => bookingForm({ date: g.date, hour: h, room_id: room.id }) }, el('span', 'a', '—'));
+    if (!staff()) return el('div', 'slot off', el('span', 'a', '—'));
+    return el('button', { class: 'slot off clickable', type: 'button', title: 'Nessun insegnante in turno', ...dropAttrs(h, { 'data-room': room.id }), onclick: () => bookingForm({ date: g.date, hour: h, room_id: room.id }) }, el('span', 'a', '—'));
   }
   function teacherSlot(g, h, t) {
     const c = g.cells.find((x) => x.hour === h && x.status === 'booked' && x.teacher_id === t.id);
     if (c) return bookedSlot(c);
     const blk = g.blocks.find((b) => b.teacher_id === t.id && h >= b.start_hour && h < b.end_hour);
-    if (blk) return el('button', { class: 'slot blocked', type: 'button', onclick: () => blockDetails(blk) }, el('span', 'a', blk.title), el('span', 'b', blk.room_name || ''));
+    if (blk) return el(staff() ? 'button' : 'div', { class: 'slot blocked', type: staff() ? 'button' : null, onclick: staff() ? () => blockDetails(blk) : null }, el('span', 'a', blk.title), el('span', 'b', blk.room_name || ''));
     const inShift = g.shifts.some((s) => s.teacher_id === t.id && h >= s.start_hour && h < s.end_hour);
     const anyCell = g.cells.find((x) => x.hour === h);
     if (anyCell && anyCell.status === 'past') return el('div', 'slot off', el('span', 'a', inShift ? 'Passata' : '—'));
     const freeRooms = g.cells.filter((x) => x.hour === h && (x.status === 'free' || x.status === 'off')).length;
-    if (inShift) return el('button', { class: 'slot free', type: 'button', onclick: () => bookingForm({ date: g.date, hour: h, teacher_id: t.id }) },
+    if (inShift && !staff()) return el('div', 'slot free ro', el('span', 'a', 'In turno · libero'), el('span', 'b', `${freeRooms} sale libere`));
+    if (inShift) return el('button', { class: 'slot free', type: 'button', ...dropAttrs(h, { 'data-teacher': t.id }), onclick: () => bookingForm({ date: g.date, hour: h, teacher_id: t.id }) },
       el('span', 'a', 'In turno · libero'), el('span', 'b', `${freeRooms} sale libere`));
-    return el('div', 'slot off', el('span', 'a', '—'));
+    return el('div', { class: 'slot off', ...dropAttrs(h, { 'data-teacher': t.id }) }, el('span', 'a', '—'));
   }
 
   // ---------- dettaglio e nuova prenotazione ----------
   function bookingDetails(c) {
     const t = teacherById(c.teacher_id), r = roomById(c.room_id);
+    const guests = c.guests || [];
     const kv = el('dl', 'kv',
       el('dt', null, 'Allievo'), el('dd', null, c.student_name || '—'),
-      el('dt', null, 'Telefono'), el('dd', null, el('a', { href: `tel:${phone(c.student_phone)}` }, phone(c.student_phone))),
+      c.student_phone ? el('dt', null, 'Telefono') : null, c.student_phone ? el('dd', null, el('a', { href: `tel:${phone(c.student_phone)}` }, phone(c.student_phone))) : null,
+      guests.length ? el('dt', null, 'Partecipanti') : null, guests.length ? el('dd', null, guests.map((g) => g.email ? `${g.name} (${g.email})` : g.name).join(', ')) : null,
       el('dt', null, 'Insegnante'), el('dd', null, `${t?.name || ''} · ${t?.style || ''}`),
       el('dt', null, 'Sala'), el('dd', null, r?.name || ''),
       c.note ? el('dt', null, 'Nota') : null, c.note ? el('dd', null, c.note) : null,
-      el('dt', null, 'Prenotata da'), el('dd', null, `${SRC[c.source] || c.source} · ${new Date(c.created_at).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })}`),
+      staff() ? el('dt', null, 'Prenotata da') : null,
+      staff() ? el('dd', null, `${SRC[c.source] || c.source} · ${new Date(c.created_at).toLocaleString('it-IT', { dateStyle: 'short', timeStyle: 'short' })}`) : null,
       c.sync_error ? el('dt', null, 'Calendario') : null, c.sync_error ? el('dd', { style: 'color:var(--danger)' }, c.sync_error) : null);
+    const head = el('div', null, el('h3', null, `${r?.name || ''} · ${pad(c.hour)}:00`), el('div', 'meta', cap(fmtDay(S.day.date))));
+    if (!staff()) { openSheet(head, kv, el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'))); return; }
     const row = el('div', 'row');
     if (c.sync_error) row.append(el('button', { class: 'btn', type: 'button', onclick: async () => { await rpc('admin_resync', { p_id: c.booking_id }); toast('Nuovo tentativo avviato: controlla tra un minuto'); closeSheet(); viewAgenda(); } }, 'Riprova calendario'));
-    row.append(confirmBtn('Annulla lezione', 'Conferma annullamento', async () => { await rpc('admin_cancel', { p_id: c.booking_id }); closeSheet(); toast('Lezione annullata. L\'allievo riceve l\'avviso se ha WhatsApp attivo.'); viewAgenda(); }),
+    const canMove = future(S.day.date, c.hour);
+    row.append(
+      el('button', { class: 'btn', type: 'button', onclick: () => editStudent({ id: c.student_id, name: c.student_name, phone: c.student_phone }, viewAgenda) }, 'Allievo'),
+      canMove ? el('button', { class: 'btn', type: 'button', onclick: () => guestsForm(c) }, 'Partecipanti') : null,
+      canMove ? el('button', { class: 'btn', type: 'button', onclick: () => moveForm(c) }, 'Sposta') : null,
+      confirmBtn('Annulla lezione', 'Conferma annullamento', async () => { await rpc('admin_cancel', { p_id: c.booking_id }); closeSheet(); toast('Lezione annullata. L\'allievo riceve l\'avviso se ha WhatsApp attivo.'); viewAgenda(); }),
       el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'));
-    openSheet(el('div', null, el('h3', null, `${r?.name || ''} · ${pad(c.hour)}:00`), el('div', 'meta', cap(fmtDay(S.day.date)))), kv, row);
+    openSheet(head, kv, row);
+  }
+
+  // ---------- spostamento (trascinamento o modulo) ----------
+  /** Sposta la lezione; se l'insegnante è fuori turno chiede conferma e riprova forzando. */
+  async function moveBooking(c, to, { force = false, quiet = false } = {}) {
+    try {
+      const b = await rpc('admin_move_booking', P({ id: c.booking_id, date: to.date, hour: to.hour, room_id: to.room_id, teacher_id: to.teacher_id, force }));
+      closeSheet();
+      toast(`${who(c)} → ${b.room}, ${b.date === S.date ? '' : fmtShort(b.date) + ' '}${pad(b.hour)}:00 con ${b.teacher}`);
+      if (to.date !== S.date) S.date = to.date;
+      viewAgenda();
+      return true;
+    } catch (e) {
+      if (!force && /non è in turno/.test(e.message)) {
+        openSheet(el('h3', null, 'Insegnante fuori turno'), el('div', null, `${e.message} Vuoi spostare la lezione comunque?`),
+          el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); renderBoard(); } }, 'No'),
+            el('button', { class: 'btn primary', type: 'button', onclick: () => moveBooking(c, to, { force: true }) }, 'Sposta comunque')));
+        return false;
+      }
+      if (quiet) throw e;
+      toast(e.message); renderBoard();
+      return false;
+    }
+  }
+
+  function moveForm(c) {
+    const date = el('input', { type: 'date', id: 'mv-date', value: S.day.date, min: S.status.today });
+    const hour = hourSelect('mv-hour', c.hour, 6, 23);
+    const room = el('select', { id: 'mv-room' }, ...activeRooms().map((r) => el('option', { value: r.id, selected: r.id === c.room_id }, r.name)));
+    const teacher = el('select', { id: 'mv-t' }, ...activeTeachers().map((t) => el('option', { value: t.id, selected: t.id === c.teacher_id }, `${t.name} · ${t.style}`)));
+    const err = el('div', 'err');
+    const save = el('button', { class: 'btn primary', type: 'button' }, 'Sposta');
+    save.onclick = async () => {
+      err.textContent = ''; save.disabled = true;
+      try { await moveBooking(c, { date: date.value, hour: Number(hour.value), room_id: Number(room.value), teacher_id: Number(teacher.value) }, { quiet: true }); }
+      catch (e) { err.textContent = e.message; } finally { save.disabled = false; }
+    };
+    openSheet(el('div', null, el('h3', null, `Sposta la lezione di ${who(c)}`), el('div', 'meta', `Ora: ${cap(fmtDay(S.day.date))}, ${pad(c.hour)}:00 · ${roomById(c.room_id)?.name || ''}`)),
+      el('div', 'fields', field('Giorno', date), field('Ora', hour)), el('div', 'fields', field('Sala', room), field('Insegnante', teacher)),
+      el('div', 'muted small', 'L\'allievo riceve il nuovo orario su WhatsApp (se attivo) e l\'invito aggiornato nel calendario.'),
+      err, el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'), save));
+  }
+
+  function guestsForm(c) {
+    const rows = (c.guests || []).map((g) => ({ ...g }));
+    const box = el('div', { style: 'display:flex;flex-direction:column;gap:8px' });
+    const render = () => box.replaceChildren(...rows.map((g, i) => {
+      const n = el('input', { type: 'text', id: `gs-n-${i}`, value: g.name || '', placeholder: 'Nome', 'aria-label': 'Nome', style: 'flex:1;min-width:120px' });
+      const m = el('input', { type: 'email', id: `gs-e-${i}`, value: g.email || '', placeholder: 'Email (per l\'invito)', 'aria-label': 'Email', style: 'flex:2;min-width:160px' });
+      n.oninput = () => (g.name = n.value); m.oninput = () => (g.email = m.value);
+      return el('div', 'shift', n, m, el('button', { class: 'btn icon', type: 'button', 'aria-label': 'Rimuovi', onclick: () => { rows.splice(i, 1); render(); } }, '×'));
+    }), rows.length < 3 ? el('button', { class: 'btn', type: 'button', style: 'align-self:flex-start', onclick: () => { rows.push({ name: '', email: '' }); render(); } }, '+ Partecipante') : null);
+    if (!rows.length) rows.push({ name: '', email: '' });
+    render();
+    const err = el('div', 'err');
+    const save = el('button', { class: 'btn primary', type: 'button' }, 'Salva');
+    save.onclick = async () => {
+      err.textContent = '';
+      try { await rpc('admin_set_booking_guests', { p_id: c.booking_id, p_guests: rows }); closeSheet(); toast('Partecipanti salvati'); viewAgenda(); }
+      catch (e) { err.textContent = e.message; }
+    };
+    openSheet(el('div', null, el('h3', null, 'Partecipanti'), el('div', 'meta', `Lezione di ${c.student_name || 'Allievo'} · ${pad(c.hour)}:00`)),
+      el('div', 'muted small', 'Per le lezioni di coppia o di gruppo. Chi ha l\'email riceve l\'invito nel calendario con l\'avviso prima della lezione (quando Outlook della scuola è collegato).'),
+      box, err, el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'), save));
+  }
+
+  // ---------- rinomina dall'agenda ----------
+  function renameRoom(id) {
+    const r = roomById(id); if (!r) return;
+    const n = el('input', { type: 'text', id: 'rn-name', value: r.name }), i = el('input', { type: 'text', id: 'rn-info', value: r.info || '' });
+    const err = el('div', 'err');
+    const save = el('button', { class: 'btn primary', type: 'button', onclick: async () => {
+      try { await rpc('admin_save_room', { p_id: r.id, p_name: n.value, p_info: i.value, p_active: r.active }); await loadBase(); closeSheet(); toast('Sala rinominata'); viewAgenda(); }
+      catch (e) { err.textContent = e.message; }
+    } }, 'Salva');
+    openSheet(el('h3', null, 'Rinomina sala'), field('Nome', n), field('Descrizione', i), err, el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'), save));
+    setTimeout(() => n.select(), 50);
+  }
+  function renameTeacher(id) {
+    const t = teacherById(id); if (!t) return;
+    const n = el('input', { type: 'text', id: 'rn-name', value: t.name }), st = el('input', { type: 'text', id: 'rn-style', value: t.style || '' });
+    const err = el('div', 'err');
+    const save = el('button', { class: 'btn primary', type: 'button', onclick: async () => {
+      try {
+        await rpc('admin_save_teacher', { p_id: t.id, p_name: n.value, p_style: st.value, p_color: t.color, p_phone: t.phone || '', p_active: !!t.active, p_shifts: null });
+        await loadBase(); closeSheet(); toast('Insegnante aggiornato'); viewAgenda();
+      } catch (e) { err.textContent = e.message; }
+    } }, 'Salva');
+    openSheet(el('h3', null, 'Modifica insegnante'), field('Nome', n), field('Stili (es. Latino americano · Tango)', st),
+      el('div', 'muted small', 'Turni, colore e accesso si cambiano in Impostazioni.'), err,
+      el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'), save));
+    setTimeout(() => n.select(), 50);
+  }
+
+  // ---------- trascinamento (mouse e touch) ----------
+  let dragOn = false;
+  document.addEventListener('touchmove', (e) => { if (dragOn) e.preventDefault(); }, { passive: false });
+  function enableDrag(grid) {
+    grid.querySelectorAll('.slot.draggable').forEach((node) => node.addEventListener('pointerdown', (e) => pressStart(e, node)));
+  }
+  function pressStart(e, node) {
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const bid = Number(node.dataset.bid);
+    const c = S.day.cells.find((x) => x.booking_id === bid); if (!c) return;
+    const touch = e.pointerType !== 'mouse';
+    const x0 = e.clientX, y0 = e.clientY; let started = false, ghost = null, target = null, timer = null, lastX = x0, lastY = y0, raf = 0;
+    const board = $('ag-board');
+    const begin = () => {
+      started = true; dragOn = true; navigator.vibrate?.(12);
+      const r = node.getBoundingClientRect();
+      ghost = node.cloneNode(true); ghost.classList.add('ghost'); ghost.style.width = r.width + 'px'; ghost.style.height = r.height + 'px';
+      ghost.dataset.dx = String(lastX - r.left); ghost.dataset.dy = String(lastY - r.top);
+      document.body.append(ghost); node.classList.add('dragging'); document.body.classList.add('is-dragging');
+      place(); tick();
+    };
+    const place = () => { if (ghost) ghost.style.transform = `translate(${lastX - Number(ghost.dataset.dx)}px, ${lastY - Number(ghost.dataset.dy)}px)`; };
+    const tick = () => { // scorrimento automatico vicino ai bordi
+      if (!started) return;
+      const edge = 56, sp = 14;
+      if (lastY < edge) window.scrollBy(0, -sp); else if (lastY > innerHeight - edge) window.scrollBy(0, sp);
+      const br = board.getBoundingClientRect();
+      if (lastX < br.left + edge) board.scrollLeft -= sp; else if (lastX > br.right - edge) board.scrollLeft += sp;
+      hit(); raf = requestAnimationFrame(tick);
+    };
+    const hit = () => {
+      const t = document.elementFromPoint(lastX, lastY)?.closest('[data-drop]');
+      if (t !== target) { target?.classList.remove('drop-over'); target = t || null; target?.classList.add('drop-over'); }
+    };
+    const move = (ev) => {
+      lastX = ev.clientX; lastY = ev.clientY;
+      if (!started) {
+        if (Math.hypot(lastX - x0, lastY - y0) < 8) return;
+        if (touch) { end(); return; }   // sul telefono serve tenere premuto: un movimento rapido è uno scorrimento
+        begin();
+      }
+      ev.preventDefault(); place();
+    };
+    const end = () => {
+      clearTimeout(timer); cancelAnimationFrame(raf);
+      removeEventListener('pointermove', move); removeEventListener('pointerup', up); removeEventListener('pointercancel', end);
+      node.removeEventListener('contextmenu', noMenu);
+      ghost?.remove(); node.classList.remove('dragging'); document.body.classList.remove('is-dragging'); target?.classList.remove('drop-over');
+      dragOn = false;
+    };
+    const up = () => {
+      const t = target, was = started; end();
+      if (!was) return;
+      node.dataset.dragged = '1'; setTimeout(() => delete node.dataset.dragged, 400);
+      if (t) dropOn(c, t);
+    };
+    const noMenu = (ev) => ev.preventDefault();
+    node.addEventListener('contextmenu', noMenu);
+    addEventListener('pointermove', move, { passive: false }); addEventListener('pointerup', up); addEventListener('pointercancel', end);
+    if (touch) timer = setTimeout(begin, 380);
+  }
+  function dropOn(c, t) {
+    const hour = Number(t.dataset.hour), g = S.day;
+    const to = { date: g.date, hour, room_id: c.room_id, teacher_id: c.teacher_id };
+    if (t.dataset.room) to.room_id = Number(t.dataset.room);
+    if (t.dataset.teacher) {
+      to.teacher_id = Number(t.dataset.teacher);
+      if (hour !== c.hour) { // stessa sala se è libera a quell'ora, altrimenti la prima libera
+        const freeAt = (rid) => { const x = g.cells.find((y) => y.hour === hour && y.room_id === rid); return x && (x.status === 'free' || x.status === 'off'); };
+        if (!freeAt(c.room_id)) {
+          const alt = g.rooms.find((r) => freeAt(r.id));
+          if (!alt) { toast(`Nessuna sala libera alle ${pad(hour)}:00`); return; }
+          to.room_id = alt.id;
+        }
+      }
+    }
+    moveBooking(c, to);
   }
 
   function bookingForm({ date, hour, room_id = null, teacher_id = null }) {
@@ -366,7 +578,7 @@
       const tb = el('tbody');
       for (const s of rows) {
         tb.append(el('tr', { style: 'cursor:pointer', onclick: () => editStudent(s, load) },
-          el('td', null, el('b', null, s.name || '(senza nome)')), el('td', 'num', phone(s.phone)), el('td', 'num', s.lessons),
+          el('td', null, el('b', null, s.name || '(senza nome)')), el('td', 'num', phone(s.phone), s.email ? el('div', 'muted small', s.email) : null), el('td', 'num', s.lessons),
           el('td', 'num', s.last_date ? fmtShort(s.last_date) : '—'),
           el('td', null, s.wa_consent ? el('span', 'pill ok', 'Sì') : el('span', 'pill off', 'No')), el('td', 'muted', s.notes || '')));
       }
@@ -375,19 +587,26 @@
     let t; q.oninput = () => { clearTimeout(t); t = setTimeout(load, 250); };
     load().catch((e) => body.replaceChildren(el('div', 'err', e.message)));
   }
-  function editStudent(s, reload) {
+  async function editStudent(s, reload) {
+    if (s.wa_consent === undefined) { // aperto dall'agenda: carica la scheda completa
+      try { s = (await rpc('admin_students', { p_q: s.phone })).find((x) => x.id === s.id) || s; } catch (e) { toast(e.message); return; }
+    }
     const name = el('input', { type: 'text', id: 'es-name', value: s.name || '' });
+    const email = el('input', { type: 'email', id: 'es-email', value: s.email || '', placeholder: 'Per ricevere gli inviti nel calendario' });
     const notes = el('textarea', { id: 'es-notes', maxlength: 500 }); notes.value = s.notes || '';
     const wa = el('input', { type: 'checkbox', id: 'es-wa', checked: !!s.wa_consent });
     const err = el('div', 'err');
     openSheet(el('div', null, el('h3', null, s.name || 'Allievo'), el('div', 'meta', phone(s.phone))),
-      field('Nome e cognome', name), field('Note interne (non visibili all\'allievo)', notes),
+      field('Nome e cognome', name), field('Email', email), field('Note interne (non visibili all\'allievo)', notes),
       el('label', 'check', wa, 'Riceve messaggi WhatsApp (consenso dato)'), err,
       el('div', 'row',
         el('button', { class: 'btn', type: 'button', onclick: () => { closeSheet(); S.list = { q: s.phone, from: addDays(S.status.today, -180), to: addDays(S.status.today, 60) }; go('prenotazioni'); } }, 'Vedi prenotazioni'),
         el('button', { class: 'btn primary', type: 'button', onclick: async () => {
-          try { await rpc('admin_update_student', { p_id: s.id, p_name: name.value, p_notes: notes.value, p_wa_consent: wa.checked }); closeSheet(); toast('Allievo aggiornato'); reload(); }
-          catch (e) { err.textContent = e.message; }
+          try {
+            await rpc('admin_update_student', { p_id: s.id, p_name: name.value, p_notes: notes.value, p_wa_consent: wa.checked });
+            if (email.value.trim() !== (s.email || '')) await rpc('admin_set_student_email', { p_id: s.id, p_email: email.value });
+            closeSheet(); toast('Allievo aggiornato'); reload();
+          } catch (e) { err.textContent = e.message; }
         } }, 'Salva')));
   }
 
@@ -445,6 +664,55 @@
       err, conflicts, el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'), save));
   }
 
+  // ================= ACCESSI =================
+  /** Crea (o aggiorna) un account con email e password tramite la Edge Function "accessi". */
+  async function createAccess(body) {
+    const { data, error } = await sb.functions.invoke('accessi', { body });
+    if (error) {
+      let msg = 'Non sono riuscito a creare l\'accesso. Riprova.';
+      try { msg = (await error.context.json()).error || msg; } catch { /* risposta non leggibile */ }
+      throw new Error(msg);
+    }
+    return data;
+  }
+  const randomPassword = () => { const a = 'abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789'; const v = crypto.getRandomValues(new Uint32Array(10)); return Array.from(v, (x) => a[x % a.length]).join(''); };
+  function accessForm({ role, teacher = null, after }) {
+    const email = el('input', { type: 'email', id: 'ac-email', value: teacher?.login_email || '', placeholder: 'nome@esempio.it', autocomplete: 'off' });
+    const pass = el('input', { type: 'text', id: 'ac-pass', value: randomPassword(), autocomplete: 'off', style: 'font-family:var(--f-mono)' });
+    const err = el('div', 'err');
+    const save = el('button', { class: 'btn primary', type: 'button' }, 'Crea accesso');
+    save.onclick = async () => {
+      err.textContent = ''; save.disabled = true;
+      try {
+        await createAccess({ role, teacher_id: teacher?.id, email: email.value, password: pass.value });
+        const msg = `Accesso a ${appRoot()}segreteria/\nEmail: ${email.value.trim().toLowerCase()}\nPassword: ${pass.value}`;
+        openSheet(el('h3', null, 'Accesso creato'), el('div', null, 'Manda questi dati alla persona (puoi copiarli):'),
+          el('pre', { class: 'card', style: 'margin:0;white-space:pre-wrap;font-family:var(--f-mono);font-size:13px' }, msg),
+          el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(msg); toast('Copiato'); } catch { toast('Seleziona il testo e copialo'); } } }, 'Copia'),
+            el('button', { class: 'btn primary', type: 'button', onclick: closeSheet }, 'Fatto')));
+        after && after();
+      } catch (e) { err.textContent = e.message; save.disabled = false; }
+    };
+    openSheet(el('div', null, el('h3', null, role === 'teacher' ? `Accesso per ${teacher.name}` : 'Nuovo accesso segreteria'),
+        el('div', 'meta', role === 'teacher' ? 'Vedrà l\'agenda con insegnanti e allievi, senza poter modificare.' : 'Potrà fare tutto quello che fai tu.')),
+      field('Email', email), field('Password (almeno 8 caratteri)', pass),
+      el('div', 'muted small', 'Se l\'email ha già un accesso, la password viene sostituita.'),
+      err, el('div', 'row', el('button', { class: 'btn', type: 'button', onclick: closeSheet }, 'Chiudi'), save));
+  }
+  function staffCard() {
+    const list = el('div', { style: 'display:flex;flex-direction:column;gap:6px' }, el('div', 'muted small', 'Caricamento…'));
+    const load = async () => {
+      try {
+        const a = await rpc('admin_accounts');
+        list.replaceChildren(...a.staff.map((x) => el('div', 'shift', el('span', 'pill ok', x.email), x.me ? el('span', 'muted small', '(tu)') : null)));
+      } catch (e) { list.replaceChildren(el('div', 'err', e.message)); }
+    };
+    load();
+    return el('div', 'card', el('h2', null, 'Accessi della segreteria'), list,
+      el('div', 'muted small', 'Gli insegnanti si abilitano dalla loro scheda qui sotto: vedono l\'agenda (insegnante e allievo) ma non possono modificarla.'),
+      el('div', null, el('button', { class: 'btn', type: 'button', onclick: () => accessForm({ role: 'staff', after: load }) }, '+ Aggiungi persona')));
+  }
+
   // ================= IMPOSTAZIONI =================
   async function viewSettings() {
     const main = $('main');
@@ -458,6 +726,7 @@
     // regole
     const num = (id, v) => el('input', { type: 'number', id, value: v, min: 0, max: 365, style: 'width:100px' });
     const sH = num('set-h', settings.horizon_days), sC = num('set-c', settings.cancel_hours), sM = num('set-m', settings.max_active_per_student), sR = num('set-r', settings.reminder_hours);
+    const sA = el('input', { type: 'number', id: 'set-a', value: settings.cal_alarm_minutes ?? 120, min: 0, max: 2880, style: 'width:100px' });
     const sL = el('input', { type: 'text', id: 'set-l', value: settings.lesson_label });
     const sN = el('input', { type: 'text', id: 'set-n', value: settings.school_name || '' });
     const sP = el('input', { type: 'tel', id: 'set-p', value: settings.school_phone || '' });
@@ -478,7 +747,7 @@
       rulesErr.textContent = '';
       try {
         await rpc('admin_save_settings', {
-          p_settings: { horizon_days: sH.value, cancel_hours: sC.value, max_active_per_student: sM.value, reminder_hours: sR.value, lesson_label: sL.value,
+          p_settings: { horizon_days: sH.value, cancel_hours: sC.value, max_active_per_student: sM.value, reminder_hours: sR.value, cal_alarm_minutes: sA.value, lesson_label: sL.value,
             school_name: sN.value, school_phone: sP.value, public_url: sU.value, whatsapp_number: sW.value },
           p_opening: openRows.map((r) => ({ weekday: r.w, start_hour: r.on.checked ? Number(r.a.value) : null, end_hour: r.on.checked ? Number(r.z.value) : null })),
         });
@@ -522,7 +791,12 @@
         try { await rpc('admin_save_teacher', P({ id: t.id ?? null, ...body })); await loadBase(); renderTeachers(); toast('Insegnante salvato'); }
         catch (e) { toast(e.message); }
       };
-      return el('div', 'card', el('div', 'shift', col, n, st, ph, el('label', 'check', act, 'Attivo')), el('div', 'label', 'Turni settimanali'), sBox, el('div', 'row', save));
+      const access = !t.id ? null : el('div', 'shift',
+        el('span', 'label', 'Accesso all\'agenda'),
+        t.login_email ? el('span', 'pill ok', t.login_email) : el('span', 'muted small', 'nessuno'),
+        el('button', { class: 'btn', type: 'button', onclick: () => accessForm({ role: 'teacher', teacher: t, after: async () => { await loadBase(); renderTeachers(); } }) }, t.login_email ? 'Nuova password' : 'Crea accesso'),
+        t.login_email ? confirmBtn('Togli accesso', 'Conferma', async () => { await rpc('admin_unlink_teacher', { p_teacher_id: t.id }); await loadBase(); renderTeachers(); toast('Accesso tolto'); }) : null);
+      return el('div', 'card', el('div', 'shift', col, n, st, ph, el('label', 'check', act, 'Attivo')), el('div', 'label', 'Turni settimanali'), sBox, access, el('div', 'row', save));
     };
     const renderTeachers = () => tBox.replaceChildren(...S.teachers.map(teacherEditor),
       el('details', null, el('summary', { class: 'btn', style: 'display:inline-flex' }, '+ Nuovo insegnante'), el('div', { style: 'margin-top:8px' }, teacherEditor({ shifts: [] }))));
@@ -543,10 +817,11 @@
         el('div', 'fields', field('Nome della scuola', sN), field('Telefono segreteria', sP), field('Indirizzo dell\'app', sU), field('Numero WhatsApp della scuola', sW)),
         el('div', 'muted small', 'Nome e telefono compaiono nell\'app e nei messaggi del bot. L\'indirizzo dell\'app viene mandato dal bot a chi chiede di prenotare. Si salvano con il pulsante qui sotto.')),
       el('div', 'card', el('h2', null, 'Regole di prenotazione'),
-        el('div', 'fields', field('Giorni di anticipo massimo', sH), field('Annullamento libero fino a (ore prima)', sC), field('Lezioni future per allievo (max)', sM), field('Promemoria WhatsApp (ore prima)', sR)),
+        el('div', 'fields', field('Giorni di anticipo massimo', sH), field('Annullamento libero fino a (ore prima)', sC), field('Lezioni future per allievo (max)', sM), field('Promemoria WhatsApp (ore prima)', sR), field('Avviso nel calendario (minuti prima)', sA)),
         field('Nome della lezione', sL),
         el('div', 'label', 'Orari di apertura'), ...openRows.map((r) => r.row), rulesErr, el('div', 'row', saveRules)),
       el('div', 'card', el('h2', null, 'Sale'), roomsBox, el('div', null, addRoom)),
+      staffCard(),
       el('h2', null, 'Insegnanti'), tBox);
   }
 

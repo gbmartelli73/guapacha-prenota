@@ -106,7 +106,7 @@ h2{font-family:var(--f-display);font-weight:700;font-size:18px;margin:0}
 .btn:disabled{opacity:.5;cursor:default}
 .field{display:flex;flex-direction:column;gap:6px}
 .field label{font-size:13px;font-weight:700}
-input[type=tel],input[type=text],input[inputmode=numeric],textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--bg);font-size:16px}
+input[type=tel],input[type=text],input[type=email],input[inputmode=numeric],textarea{width:100%;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--bg);font-size:16px}
 input.code{font-family:var(--f-mono);font-size:24px;letter-spacing:.4em;text-align:center}
 textarea{min-height:70px;resize:vertical}
 .check{display:flex;gap:10px;align-items:flex-start;font-size:13.5px}
@@ -145,3 +145,9 @@ dialog::backdrop{background:rgba(15,12,20,.5)}
 @media (prefers-reduced-motion: reduce){*{transition:none!important;animation:none!important}}
 .brand-wrap{display:flex;align-items:center;gap:10px;min-width:0}
 .logo{width:34px;height:34px;flex:none;border-radius:50%}
+.bk .acts{display:flex;flex-direction:column;gap:6px;align-items:stretch}
+.partner{border:1px dashed var(--line);border-radius:12px;padding:8px 12px}
+.partner summary{cursor:pointer;font-weight:600;font-size:14px;color:var(--accent)}
+.partner[open] summary{margin-bottom:8px}
+.pair{display:flex;flex-direction:column;gap:8px}
+a.btn{text-decoration:none;text-align:center;display:block;color:var(--ink)}
