@@ -151,3 +151,4 @@ dialog::backdrop{background:rgba(15,12,20,.5)}
 .partner[open] summary{margin-bottom:8px}
 .pair{display:flex;flex-direction:column;gap:8px}
 a.btn{text-decoration:none;text-align:center;display:block;color:var(--ink)}
+a.btn.primary{color:var(--accent-ink)}

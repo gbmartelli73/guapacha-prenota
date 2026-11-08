@@ -446,7 +446,13 @@
     const alarm = Number(S.cfg.cal_alarm_minutes ?? 120);
     const when = alarm >= 60 && alarm % 60 === 0 ? `${alarm / 60} ${alarm === 60 ? 'ora' : 'ore'}` : `${alarm} minuti`;
     const links = calLinks(b);
-    const ics = el('button', 'btn primary block', 'Calendario del telefono o Outlook (con avviso)'); ics.type = 'button'; ics.onclick = () => downloadIcs(b);
+    // link HTTPS al file .ics: funziona anche su iPhone e dall'app installata; senza token si genera il file nel browser
+    const token = b.ics_token || S.mine.upcoming.find((x) => x.id === b.id)?.ics_token;
+    let ics;
+    if (token) {
+      ics = el('a', 'btn primary block', 'Calendario del telefono o Outlook (con avviso)');
+      ics.href = `${C.supabaseUrl}/functions/v1/ics?b=${b.id}&t=${token}`; ics.target = '_blank'; ics.rel = 'noopener';
+    } else { ics = el('button', 'btn primary block', 'Calendario del telefono o Outlook (con avviso)'); ics.type = 'button'; ics.onclick = () => downloadIcs(b); }
     const mk = (href, txt) => { const a = el('a', 'btn block', txt); a.href = href; a.target = '_blank'; a.rel = 'noopener'; return a; };
     const close = el('button', 'btn block', 'Chiudi'); close.type = 'button'; close.onclick = closeSheet;
     const x = lessonText(b);
