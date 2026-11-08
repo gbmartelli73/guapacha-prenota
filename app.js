@@ -670,12 +670,21 @@
     const err = el('div', 'err');
     const row = el('div', 'row');
     if (S.me.push) {
-      const t = el('button', 'btn primary', 'Invia una notifica di prova'); t.type = 'button';
-      t.onclick = async () => { t.disabled = true; err.textContent = ''; try { await rpc('push_test'); toast('Inviata: arriva tra pochi secondi'); } catch (x) { err.textContent = x.message; } finally { setTimeout(() => (t.disabled = false), 3000); } };
+      const t = el('button', 'btn primary', 'Prova: arriva entro un minuto'); t.type = 'button';
+      t.onclick = async () => {
+        t.disabled = true; err.textContent = '';
+        try { await rpc('push_test_later', { p_seconds: 15 }); toast('Ora chiudi l\'app o blocca il telefono: la notifica arriva entro un minuto'); }
+        catch (x) { err.textContent = x.message; } finally { setTimeout(() => (t.disabled = false), 5000); }
+      };
+      const now = el('button', 'btn', 'Prova subito'); now.type = 'button';
+      now.onclick = async () => { now.disabled = true; err.textContent = ''; try { await rpc('push_test'); toast('Inviata: arriva tra pochi secondi'); } catch (x) { err.textContent = x.message; } finally { setTimeout(() => (now.disabled = false), 3000); } };
       const off = el('button', 'btn', 'Disattiva'); off.type = 'button';
       off.onclick = async () => { await disablePush(); toast('Notifiche disattivate'); renderNotify(); };
-      row.append(off, t);
-      box.append(el('div', 'ok-chip', '✓ Attive su questo telefono'));
+      const fix = el('button', 'btn', 'Riattiva'); fix.type = 'button';
+      fix.onclick = async () => { fix.disabled = true; err.textContent = ''; try { await disablePush(); await enablePush(); toast('Notifiche riattivate'); renderNotify(); } catch (x) { err.textContent = x.message; fix.disabled = false; } };
+      row.append(off, fix, now, t);
+      box.append(el('div', 'ok-chip', '✓ Attive su questo telefono'),
+        el('div', 'muted small', 'Su iPhone il banner compare quando l\'app è chiusa o in background: usa "Prova: arriva entro un minuto" e chiudi l\'app.'));
     } else {
       const on = el('button', 'btn primary', 'Attiva le notifiche'); on.type = 'button';
       on.onclick = async () => { on.disabled = true; err.textContent = ''; try { await enablePush(); toast('Notifiche attivate'); renderNotify(); } catch (x) { err.textContent = x.message; on.disabled = false; } };
@@ -750,7 +759,11 @@
     const x = el('button', 'btn', 'Ok'); x.type = 'button'; x.onclick = () => { $('install').hidden = true; try { localStorage.setItem('install-dismissed', '1'); } catch {} };
     $('install').append(x);
   }
-  if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').then((r) => r.update()).catch(() => {});
+    // notifica arrivata mentre l'app è aperta: la mostriamo anche dentro l'app
+    navigator.serviceWorker.addEventListener('message', (e) => { if (e.data?.type === 'push') toast(`🔔 ${e.data.title}: ${e.data.body}`); });
+  }
 
   // ---------------- avvio ----------------
   document.querySelectorAll('.tab').forEach((b) => (b.onclick = () => setTab(b.dataset.tab)));

@@ -1,5 +1,7 @@
 // Service worker: apre l'app anche con rete lenta; i dati (/api) arrivano sempre dal server.
-const CACHE = 'prenota-v3.0.0';
+const CACHE = 'prenota-v3.1.0';
+// configurazione Supabase (stesso file dell'app) per segnalare la ricezione delle notifiche
+try { self.window = self; importScripts('config.js'); } catch { /* facoltativo */ }
 // percorsi relativi: l'app funziona anche in una sottocartella (es. GitHub Pages)
 const SHELL = ['./', 'style.css', 'app.js', 'config.js', 'vendor/supabase.js', 'vendor/qrcode.js', 'manifest.webmanifest', 'icons/icon-192.png', 'logo.svg'];
 const HOME = new URL('./', self.location).href;
@@ -20,12 +22,26 @@ self.addEventListener('fetch', (e) => {
 // notifiche push: promemoria, posti liberati, cambi d'orario
 self.addEventListener('push', (e) => {
   let d = {};
-  try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data && e.data.text() }; }
-  e.waitUntil(self.registration.showNotification(d.title || 'Guapacha Studio', {
-    body: d.body || '', icon: 'icons/icon-192.png', badge: 'icons/icon-192.png',
-    tag: d.tag || undefined, renotify: !!d.tag, data: { url: d.url || HOME },
-  }));
+  try { d = e.data ? e.data.json() : {}; } catch { d = { body: e.data ? e.data.text() : '' }; }
+  const title = d.title || 'Guapacha Studio';
+  const opts = { body: d.body || '', icon: 'icons/icon-192.png', data: { url: d.url || HOME } };
+  if (d.tag) opts.tag = d.tag;
+  e.waitUntil(Promise.all([
+    self.registration.showNotification(title, opts),
+    // l'app aperta mostra anche un avviso interno (su iPhone il banner può non comparire ad app in primo piano)
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((list) => list.forEach((c) => c.postMessage({ type: 'push', title, body: d.body || '' }))),
+    ack(),
+  ]));
 });
+async function ack() {
+  try {
+    const C = self.SCUOLA_CONFIG; const sub = await self.registration.pushManager.getSubscription();
+    if (!C || !sub) return;
+    await fetch(`${C.supabaseUrl}/rest/v1/rpc/push_received`, { method: 'POST',
+      headers: { apikey: C.supabaseAnonKey, Authorization: `Bearer ${C.supabaseAnonKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ p_endpoint: sub.endpoint }) });
+  } catch { /* solo diagnostica */ }
+}
 self.addEventListener('notificationclick', (e) => {
   e.notification.close();
   const target = new URL(e.notification.data && e.notification.data.url || HOME, HOME).href;
