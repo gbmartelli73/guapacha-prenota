@@ -1,5 +1,5 @@
 // Service worker: apre l'app anche con rete lenta; i dati (/api) arrivano sempre dal server.
-const CACHE = 'prenota-v3.3.0';
+const CACHE = 'prenota-v3.4.0';
 // configurazione Supabase (stesso file dell'app) per segnalare la ricezione delle notifiche
 try { self.window = self; importScripts('config.js'); } catch { /* facoltativo */ }
 // percorsi relativi: l'app funziona anche in una sottocartella (es. GitHub Pages)
@@ -13,7 +13,8 @@ self.addEventListener('fetch', (e) => {
   const url = new URL(e.request.url);
   if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.includes('/segreteria/')) return;
   // rete prima, cache come riserva: gli aggiornamenti dell'app arrivano subito
-  e.respondWith(fetch(e.request).then((res) => {
+  // no-cache: chiede sempre al server se il file è cambiato (GitHub Pages lo farebbe tenere in cache 10 minuti)
+  e.respondWith(fetch(e.request.url, { cache: 'no-cache', credentials: 'same-origin' }).then((res) => {
     if (res.ok) { const copy = res.clone(); caches.open(CACHE).then((c) => c.put(e.request, copy)); }
     return res;
   }).catch(() => caches.match(e.request).then((r) => r || caches.match(HOME))));
