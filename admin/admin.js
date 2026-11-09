@@ -51,12 +51,12 @@
     return data;
   }
   /** Edge Function "amministrazione": crea e gestisce gli account (serve il service role, quindi passa dal server). */
-  async function admin(body) {
+  async function admin(body, fn = 'amministrazione') {
     const { data: { session } } = await sb.auth.getSession();
     if (!session) { showLogin('Sessione scaduta: accedi di nuovo.'); throw new Error('Sessione scaduta.'); }
     let res;
     try {
-      res = await fetch(`${C.supabaseUrl}/functions/v1/amministrazione`, {
+      res = await fetch(`${C.supabaseUrl}/functions/v1/${fn}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${session.access_token}`, apikey: C.supabaseAnonKey },
         body: JSON.stringify(body),
       });
@@ -150,10 +150,10 @@
   addEventListener('hashchange', () => S.me && route());
   function route() {
     const v = location.hash.slice(1) || 'insights';
-    S.view = ['insights', 'utenze', 'sale', 'insegnanti', 'disponibilita'].includes(v) ? v : 'insights';
+    S.view = ['insights', 'utenze', 'sale', 'insegnanti', 'disponibilita', 'integrazioni'].includes(v) ? v : 'insights';
     document.querySelectorAll('.nav[data-view]').forEach((b) => b.setAttribute('aria-current', b.dataset.view === S.view ? 'page' : 'false'));
     tip.hidden = true;
-    ({ utenze: viewUsers, sale: viewRooms, insegnanti: viewTeachers, disponibilita: viewAvailability }[S.view] || viewInsights)();
+    ({ utenze: viewUsers, sale: viewRooms, insegnanti: viewTeachers, disponibilita: viewAvailability, integrazioni: viewIntegrations }[S.view] || viewInsights)();
   }
   const main = $('main');
   const loading = (t) => main.replaceChildren(el('div', 'toolbar', el('h1', null, t)), el('p', 'muted', 'Carico…'));
@@ -655,6 +655,221 @@
     const ch = await window.Disponibilita.changesCard({ rpc, onOpen: (id) => { S.availTeacher = id; viewAvailability(id); } });
     if (ch) main.insertBefore(ch, box);
     await window.Disponibilita.mount(box, { rpc, toast, teacherId: teacherId ?? S.availTeacher ?? null });
+  }
+
+  // ================================================================ INTEGRAZIONI: Google Calendar e WhatsApp Business
+  const integ = (body) => admin(body, 'integrazioni');
+  const copyBtn = (text, label = 'Copia') => el('button', { class: 'btn', type: 'button', onclick: async () => { try { await navigator.clipboard.writeText(text); toast('Copiato'); } catch { toast('Seleziona il testo e copialo'); } } }, label);
+  const steps = (items) => el('ol', { class: 'howto' }, items.map((x) => el('li', null, ...[].concat(x))));
+  const ext = (href, text) => el('a', { href, target: '_blank', rel: 'noopener' }, text);
+  const code = (t) => el('code', null, t);
+
+  async function viewIntegrations() {
+    loading('Integrazioni');
+    try { S.integ = await rpc('sa_integrations_status'); } catch (x) { main.replaceChildren(el('h1', null, 'Integrazioni'), el('p', 'err', x.message)); return; }
+    main.replaceChildren(el('div', 'toolbar', el('h1', null, 'Integrazioni'), el('span', 'grow'), el('button', { class: 'btn', type: 'button', onclick: () => viewIntegrations() }, 'Aggiorna')),
+      el('p', 'muted small', 'Collega il calendario Google della scuola e il numero WhatsApp Business. Le chiavi restano cifrate su Supabase e non sono mai visibili nella pagina.'),
+      googleCard(), importCard(), waCard());
+  }
+
+  // ---------------- Google Calendar: collegamento in sola lettura
+  function googleCard() {
+    const G = S.integ.google;
+    const head = el('h2', null, 'Google Calendar ', G.connected ? el('span', 'pill ok', 'Collegato · sola lettura') : el('span', 'pill off', 'Non collegato'));
+    if (G.connected) {
+      return el('div', 'card', head,
+        el('dl', 'kv', el('dt', null, 'Calendario'), el('dd', null, G.calendar_id), el('dt', null, 'Account di servizio'), el('dd', null, G.sa_email),
+          el('dt', null, 'Collegato il'), el('dd', null, G.connected_at || '—'), el('dt', null, 'Ultima importazione'), el('dd', null, G.last_import ? `${G.last_import} · ${N(G.imported)} appuntamenti importati in totale` : 'mai')),
+        el('div', 'note', 'Per ora l\'app legge soltanto: importa gli appuntamenti da Google (qui sotto) e non scrive nulla sul calendario. La copia automatica delle prenotazioni su Google si attiverà quando l\'app sarà pronta.'),
+        el('div', { class: 'row', style: 'justify-content:flex-start' }, confirmBtn('Scollega Google Calendar', 'Conferma: scollega', async () => { await integ({ action: 'google_scollega' }); toast('Google Calendar scollegato'); viewIntegrations(); }, 'btn')));
+    }
+    const cal = el('input', { type: 'text', id: 'g-cal', placeholder: 'es. abcd1234@group.calendar.google.com oppure scuola@gmail.com', spellcheck: 'false', autocomplete: 'off' });
+    const file = el('input', { type: 'file', id: 'g-key', accept: '.json,application/json' });
+    const err = el('div', 'err');
+    const go = el('button', { class: 'btn primary', type: 'button' }, 'Collega e verifica');
+    go.onclick = async () => {
+      err.textContent = '';
+      if (!cal.value.trim()) { err.textContent = 'Inserisci l\'ID del calendario.'; return; }
+      if (!file.files[0]) { err.textContent = 'Carica il file JSON della chiave.'; return; }
+      go.disabled = true; go.textContent = 'Verifico…';
+      try { const r = await integ({ action: 'google_collega', calendar_id: cal.value.trim(), key_json: await file.files[0].text() }); toast(`Collegato: ${r.sa_email}`); viewIntegrations(); }
+      catch (x) { err.textContent = x.message; go.disabled = false; go.textContent = 'Collega e verifica'; }
+    };
+    return el('div', 'card', head,
+      el('div', 'muted small', 'Collegamento in sola lettura: l\'app legge gli appuntamenti del calendario della scuola. Serve una volta sola, circa 10 minuti.'),
+      steps([
+        ['Apri ', ext('https://console.cloud.google.com/projectcreate', 'Google Cloud Console'), ' con l\'account Google della scuola e crea un progetto (es. "Guapacha app").'],
+        ['Nel progetto vai su ', el('b', null, 'API e servizi → Libreria'), ', cerca ', el('b', null, 'Google Calendar API'), ' e premi ', el('b', null, 'Abilita'), '.'],
+        ['Vai su ', el('b', null, 'IAM e amministrazione → Account di servizio'), ' → ', el('b', null, 'Crea account di servizio'), ' (nome es. "calendario-app"); non servono ruoli.'],
+        ['Apri l\'account creato → scheda ', el('b', null, 'Chiavi'), ' → ', el('b', null, 'Aggiungi chiave → Crea nuova chiave → JSON'), ': si scarica un file .json. Copia anche l\'email dell\'account (finisce con ', code('iam.gserviceaccount.com'), ').'],
+        ['In ', ext('https://calendar.google.com/calendar/r/settings', 'Google Calendar → Impostazioni'), ' scegli il calendario della scuola → ', el('b', null, 'Condividi con persone e gruppi specifici'), ' → aggiungi l\'email dell\'account di servizio con il permesso ', el('b', null, 'Vedere tutti i dettagli degli eventi'), '.'],
+        ['Nella stessa pagina, sezione ', el('b', null, 'Integra calendario'), ', copia l\'', el('b', null, 'ID calendario'), ' (per il calendario principale è l\'indirizzo Gmail).'],
+        'Incolla qui sotto l\'ID, carica il file JSON e premi "Collega e verifica".',
+      ]),
+      el('div', 'fields', field('ID calendario', cal), field('File della chiave (JSON)', file)), err, el('div', 'row', go),
+      el('div', 'muted small', 'Non vuoi creare l\'account di servizio? Puoi comunque importare gli appuntamenti con l\'indirizzo iCal segreto, qui sotto.'));
+  }
+
+  // ---------------- importazione degli appuntamenti
+  function importCard() {
+    const G = S.integ.google;
+    const today = S.me.today;
+    const addD = (k, n) => { const d = parse(k); d.setDate(d.getDate() + n); return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`; };
+    const srcG = el('input', { type: 'radio', name: 'g-src', id: 'g-src-g', value: 'google', checked: G.connected, disabled: !G.connected });
+    const srcI = el('input', { type: 'radio', name: 'g-src', id: 'g-src-i', value: 'ical', checked: !G.connected });
+    const url = el('input', { type: 'url', id: 'g-ical', placeholder: 'https://calendar.google.com/calendar/ical/…/private-…/basic.ics', spellcheck: 'false', autocomplete: 'off' });
+    const urlBox = el('div', null, field('Indirizzo iCal', url), el('div', 'muted small', 'Google Calendar → Impostazioni del calendario → Integra calendario → ', el('b', null, 'Indirizzo segreto in formato iCal'), '. Funziona anche con Outlook e Apple (indirizzi .ics).'));
+    const sync = () => (urlBox.hidden = !srcI.checked); srcG.onchange = sync; srcI.onchange = sync; sync();
+    const from = el('input', { type: 'date', id: 'g-from', value: today, min: addD(today, -1) });
+    const to = el('input', { type: 'date', id: 'g-to', value: addD(today, 90) });
+    const err = el('div', 'err');
+    const out = el('div');
+    const go = el('button', { class: 'btn primary', type: 'button' }, 'Mostra anteprima');
+    go.onclick = async () => {
+      err.textContent = ''; out.replaceChildren(); go.disabled = true; go.textContent = 'Leggo il calendario…';
+      try {
+        const r = await integ({ action: 'google_anteprima', source: srcI.checked ? 'ical' : 'google', ical_url: url.value.trim(), from: from.value, to: to.value });
+        out.replaceChildren(previewTable(r));
+      } catch (x) { err.textContent = x.message; }
+      go.disabled = false; go.textContent = 'Mostra anteprima';
+    };
+    return el('div', 'card', el('h2', null, 'Importa appuntamenti da Google Calendar'),
+      el('div', 'muted small', 'Gli appuntamenti diventano lezioni (se l\'app riconosce allievo e insegnante), sale occupate, assenze degli insegnanti o chiusure. Prima vedi l\'anteprima e decidi tu riga per riga; ogni appuntamento si importa una volta sola.'),
+      el('div', 'shift', el('label', 'check', srcG, el('span', null, 'Dal calendario collegato')), el('label', 'check', srcI, el('span', null, 'Da un indirizzo iCal'))),
+      urlBox, el('div', 'fields', field('Dal', from), field('Al', to)), err, el('div', 'row', go), out);
+  }
+
+  const AS = [['lezione', 'Lezione'], ['sala', 'Sala occupata'], ['assenza', 'Assenza insegnante'], ['chiusura', 'Chiusura scuola'], ['salta', 'Non importare']];
+  function previewTable(r) {
+    if (!r.items.length) return el('p', 'muted', 'Nessun appuntamento nel periodo scelto.');
+    const sel = (list, val, empty) => { const s = el('select', null, el('option', { value: '' }, empty), list.map((x) => el('option', { value: x.id, selected: x.id === val }, x.name))); return s; };
+    const rows = r.items.map((it) => {
+      const lock = it.imported || it.by_app || it.past;
+      const as = el('select', { disabled: lock }, AS.map(([k, l]) => el('option', { value: k, selected: k === it.as }, l)));
+      const room = sel(r.rooms, it.room_id, it.as === 'lezione' ? 'prima libera' : '—');
+      const teacher = sel(r.teachers, it.teacher_id, '—');
+      const student = sel(r.students, it.student_id, '—');
+      const syncRow = () => {
+        it.as = as.value; it.room_id = room.value ? Number(room.value) : null; it.teacher_id = teacher.value ? Number(teacher.value) : null; it.student_id = student.value ? Number(student.value) : null;
+        room.disabled = lock || !['lezione', 'sala'].includes(it.as); teacher.disabled = lock || !['lezione', 'assenza'].includes(it.as); student.disabled = lock || it.as !== 'lezione';
+        tr.style.opacity = it.as === 'salta' ? '.55' : '1'; count();
+      };
+      [as, room, teacher, student].forEach((x) => (x.onchange = syncRow));
+      const when = it.all_day ? `${fmtShort(it.date)} · tutto il giorno` : `${fmtShort(it.date)} · ${pad(it.hour)}:${pad(it.min)}–${it.end_hour === 24 && !it.end_min ? '24:00' : `${pad(it.end_min ? it.end_hour - 1 : it.end_hour)}:${pad(it.end_min)}`}`;
+      const flag = it.imported ? 'già importato' : it.by_app ? 'creato dall\'app' : it.past ? 'già passato' : '';
+      const tr = el('tr', null, el('td', 'num', when), el('td', null, el('b', null, it.title || '(senza titolo)'), it.location ? el('div', 'muted small', it.location) : null, flag ? el('div', 'muted small', flag) : null),
+        el('td', null, as), el('td', null, room), el('td', null, teacher), el('td', null, student));
+      setTimeout(syncRow);
+      return tr;
+    });
+    const btn = el('button', { class: 'btn primary', type: 'button' });
+    const res = el('div');
+    const count = () => { const n = r.items.filter((x) => x.as !== 'salta' && !x.imported && !x.by_app && !x.past).length; btn.textContent = n ? `Importa ${n} appuntament${n === 1 ? 'o' : 'i'}` : 'Niente da importare'; btn.disabled = !n; };
+    btn.onclick = async () => {
+      const items = r.items.filter((x) => x.as !== 'salta' && !x.imported && !x.by_app && !x.past);
+      const bad = items.find((x) => (x.as === 'lezione' && (!x.teacher_id || !x.student_id)) || (x.as === 'sala' && !x.room_id) || (x.as === 'assenza' && !x.teacher_id));
+      if (bad) { toast(`"${bad.title}" del ${fmtShort(bad.date)}: scegli ${bad.as === 'sala' ? 'la sala' : bad.as === 'assenza' ? 'l\'insegnante' : 'insegnante e allievo'}.`); return; }
+      btn.disabled = true; btn.textContent = 'Importo…';
+      try {
+        const o = await integ({ action: 'google_importa', items });
+        for (const x of items) if (!o.skipped.some((s) => s.title === (x.title || 'Da Google Calendar') && s.date === x.date)) x.imported = true;
+        res.replaceChildren(el('div', 'note', el('b', null, `${N(o.imported)} appuntament${o.imported === 1 ? 'o importato' : 'i importati'}.`),
+          o.skipped.length ? el('div', null, `${o.skipped.length} non importat${o.skipped.length === 1 ? 'o' : 'i'}:`, el('ul', { style: 'margin:4px 0 0;padding-left:18px' }, o.skipped.slice(0, 20).map((s) => el('li', null, `${s.date ? fmtShort(s.date) + ' · ' : ''}${s.title}: ${s.reason}`)))) : null));
+        toast('Importazione completata'); S.integ = await rpc('sa_integrations_status').catch(() => S.integ);
+      } catch (x) { res.replaceChildren(el('div', 'err', x.message)); }
+      count();
+    };
+    return el('div', null, el('div', 'label', `${r.total} appuntamenti trovati${r.total > r.items.length ? ` (mostrati i primi ${r.items.length})` : ''}`),
+      el('div', 'table-wrap', el('table', null, el('thead', null, el('tr', null, ['Quando', 'Appuntamento', 'Importa come', 'Sala', 'Insegnante', 'Allievo'].map((h) => el('th', null, h)))), el('tbody', null, rows))),
+      el('div', 'row', btn), res);
+  }
+
+  // ---------------- WhatsApp Business
+  function waCard() {
+    const W = S.integ.wa;
+    const head = el('h2', null, 'WhatsApp Business ', W.connected ? el('span', 'pill ok', 'Collegato') : el('span', 'pill off', 'Non collegato'));
+    const stepsBox = el('div');
+    if (W.connected) {
+      const tplBox = el('div', null, el('p', 'muted', 'Carico i modelli…'));
+      const loadTpl = async (create = false) => {
+        tplBox.replaceChildren(el('p', 'muted', create ? 'Invio i modelli a Meta…' : 'Carico i modelli…'));
+        try {
+          const r = await integ({ action: create ? 'wa_crea_modelli' : 'wa_modelli' });
+          const ST = { APPROVED: ['ok', 'Approvato'], PENDING: ['warn', 'In revisione'], IN_APPEAL: ['warn', 'In revisione'], REJECTED: ['bad', 'Rifiutato'], PAUSED: ['bad', 'In pausa'], DISABLED: ['bad', 'Disattivato'], MANCANTE: ['off', 'Da creare'] };
+          const missing = r.templates.filter((t) => t.status === 'MANCANTE').length;
+          tplBox.replaceChildren(
+            el('div', 'table-wrap', el('table', null, el('thead', null, el('tr', null, ['Modello', 'Stato', 'Testo'].map((h) => el('th', null, h)))),
+              el('tbody', null, r.templates.map((t) => { const [c, l] = ST[t.status] || ['off', t.status]; return el('tr', null, el('td', null, code(t.name), el('div', 'muted small', t.category === 'AUTHENTICATION' ? 'Autenticazione' : 'Utilità')), el('td', null, el('span', `pill ${c}`, l), t.reason ? el('div', 'muted small', t.reason) : null), el('td', 'small', t.text)); })))),
+            r.created.length ? el('div', 'note', r.created.map((c) => el('div', null, `${c.ok ? '✓' : '✕'} ${c.name}${c.note ? ': ' + c.note : ''}`))) : null,
+            el('div', { class: 'row', style: 'justify-content:flex-start' },
+              missing ? el('button', { class: 'btn primary', type: 'button', onclick: () => loadTpl(true) }, `Crea i ${missing} modelli mancanti`) : null,
+              el('button', { class: 'btn', type: 'button', onclick: () => loadTpl(false) }, 'Aggiorna lo stato')),
+            el('div', 'muted small', 'Meta approva i modelli di solito in pochi minuti, a volte in qualche ora. Finché un modello non è approvato, quel messaggio non parte.'));
+        } catch (x) { tplBox.replaceChildren(el('div', 'err', x.message)); }
+      };
+      loadTpl();
+      const ph = el('input', { type: 'tel', id: 'wa-test', placeholder: 'es. 333 1234567' });
+      const tsel = el('select', { id: 'wa-tpl' }, el('option', { value: 'hello_world' }, 'Messaggio di prova di Meta (hello_world)'), el('option', { value: 'conferma_prenotazione' }, 'Conferma di prenotazione (esempio)'));
+      const terr = el('div', 'err');
+      const send = el('button', { class: 'btn', type: 'button' }, 'Invia prova');
+      send.onclick = async () => { terr.textContent = ''; send.disabled = true; try { const r = await integ({ action: 'wa_prova', phone: ph.value, template: tsel.value }); toast(`Messaggio inviato a +${r.to}`); } catch (x) { terr.textContent = x.message; } send.disabled = false; };
+      return el('div', 'card', head,
+        el('dl', 'kv', el('dt', null, 'Numero'), el('dd', null, `${W.display || '—'}${W.name ? ' · ' + W.name : ''}`), el('dt', null, 'ID numero'), el('dd', null, W.phone_number_id),
+          el('dt', null, 'Account WhatsApp Business'), el('dd', null, W.waba_id), el('dt', null, 'Collegato il'), el('dd', null, W.connected_at || '—'),
+          el('dt', null, 'Allievi con consenso'), el('dd', null, N(W.consents)), el('dt', null, 'Messaggi in coda'), el('dd', null, `${N(W.pending)}${W.errors ? ` · ${N(W.errors)} con errore` : ''}`)),
+        W.last_error ? el('div', 'note', `Ultimo errore: ${W.last_error}`) : null,
+        el('div', 'label', 'Webhook (messaggi in arrivo e pulsanti Confermo/Annullo)'),
+        el('div', 'muted small', 'Se il collegamento non l\'ha impostato da solo: developers.facebook.com → la tua app → WhatsApp → Configurazione → Webhook → Modifica, incolla URL e token, poi abilita il campo "messages".'),
+        el('div', 'shift', el('span', 'small', 'URL di callback'), code(W.webhook_url), copyBtn(W.webhook_url)),
+        el('div', 'shift', el('span', 'small', 'Token di verifica'), code(W.verify_token || '—'), W.verify_token ? copyBtn(W.verify_token) : null),
+        el('div', 'label', 'Modelli di messaggio'), tplBox,
+        el('div', 'label', 'Messaggio di prova'), el('div', 'shift', ph, tsel, send), terr,
+        el('div', 'note', 'Il codice di accesso via WhatsApp si accende da Utenze → "Accesso degli allievi all\'app" quando il modello codice_accesso è approvato (serve anche l\'aggancio "Send SMS hook" su Supabase, a cura di Think Different).'),
+        el('div', { class: 'row', style: 'justify-content:flex-start' }, waForm(true, stepsBox).toggle, confirmBtn('Scollega WhatsApp', 'Conferma: scollega', async () => { await integ({ action: 'wa_scollega' }); toast('WhatsApp scollegato'); viewIntegrations(); }, 'btn')),
+        stepsBox);
+    }
+    const f = waForm(false, stepsBox);
+    return el('div', 'card', head,
+      el('div', 'muted small', 'Con WhatsApp collegato partono in automatico: conferma della prenotazione, promemoria 24 ore prima con i pulsanti Confermo/Annullo, avviso di annullamento, iscrizione e posto libero in lista d\'attesa. Servono circa 30 minuti più i tempi di verifica di Meta.'),
+      steps([
+        ['Serve un ', ext('https://business.facebook.com/', 'account Meta Business'), ' della scuola (meglio se verificato) e un numero di telefono dedicato, non già usato sull\'app WhatsApp normale.'],
+        ['Su ', ext('https://developers.facebook.com/apps/creation/', 'developers.facebook.com'), ' crea un\'app di tipo ', el('b', null, 'Business'), ' e aggiungi il prodotto ', el('b', null, 'WhatsApp'), '. Collega l\'account WhatsApp Business della scuola.'],
+        ['In ', el('b', null, 'WhatsApp → Configurazione API'), ' aggiungi il numero della scuola e verificalo con il codice via SMS. Copia ', el('b', null, 'ID numero di telefono'), ' e ', el('b', null, 'ID account WhatsApp Business'), '.'],
+        ['In ', ext('https://business.facebook.com/settings/system-users', 'Impostazioni business → Utenti di sistema'), ' crea un utente di sistema (Amministratore), assegnagli l\'app e l\'account WhatsApp con controllo completo, poi ', el('b', null, 'Genera token'), ' con i permessi ', code('whatsapp_business_messaging'), ' e ', code('whatsapp_business_management'), ' e scadenza ', el('b', null, 'Mai'), '.'],
+        ['In ', el('b', null, 'Impostazioni app → Di base'), ' copia ', el('b', null, 'ID app'), ' e ', el('b', null, 'Chiave segreta'), ': servono per impostare il webhook in automatico e verificare i messaggi in arrivo.'],
+        ['In ', ext('https://business.facebook.com/wa/manage/home/', 'WhatsApp Manager'), ' aggiungi un metodo di pagamento: i messaggi modello sono a pagamento (tariffe Meta per messaggio).'],
+        'Incolla i dati qui sotto e premi "Collega". Poi crea i modelli di messaggio con un clic e attendi l\'approvazione di Meta.',
+      ]),
+      f.form, stepsBox);
+  }
+
+  function waForm(update, stepsBox) {
+    const W = S.integ.wa;
+    const inp = (id, ph, val = '', type = 'text') => el('input', { type, id, placeholder: ph, value: val, autocomplete: 'off', spellcheck: 'false' });
+    const pn = inp('wa-pn', 'es. 123456789012345', W.phone_number_id || ''), wb = inp('wa-wb', 'es. 102938475610293', W.waba_id || '');
+    const tk = inp('wa-tk', update ? 'lascia vuoto per non cambiarlo' : 'EAAG…', '', 'password');
+    const ai = inp('wa-ai', 'es. 1234567890', W.app_id || ''), as = inp('wa-as', update && W.has_app_secret ? 'già impostata: lascia vuoto' : 'chiave segreta dell\'app', '', 'password');
+    const err = el('div', 'err');
+    const go = el('button', { class: 'btn primary', type: 'button' }, update ? 'Salva e ricollega' : 'Collega');
+    go.onclick = async () => {
+      err.textContent = ''; go.disabled = true; go.textContent = 'Verifico con Meta…';
+      try {
+        const r = await integ({ action: 'wa_collega', phone_number_id: pn.value, waba_id: wb.value, token: tk.value, app_id: ai.value, app_secret: as.value });
+        S.integ = await rpc('sa_integrations_status');
+        await viewIntegrations();
+        const box = main.querySelector('.wa-steps') || el('div');
+        stepsBox = box;
+        toast(`WhatsApp collegato: ${r.display}`);
+        const note = el('div', { class: 'note wa-steps' }, el('b', null, 'Esito del collegamento'), r.steps.map((s) => el('div', null, `${s.ok ? '✓' : '⚠'} ${s.step}${s.note ? ' — ' + s.note : ''}`)));
+        main.append(note); note.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } catch (x) { err.textContent = x.message; go.disabled = false; go.textContent = update ? 'Salva e ricollega' : 'Collega'; }
+    };
+    const form = el('div', null, el('div', 'fields', field('ID numero di telefono', pn), field('ID account WhatsApp Business', wb), field('Token di accesso permanente', tk), field('ID app', ai), field('Chiave segreta dell\'app', as)), err, el('div', 'row', go));
+    if (!update) return { form };
+    form.hidden = true;
+    const toggle = el('button', { class: 'btn', type: 'button', onclick: () => { form.hidden = !form.hidden; } }, 'Modifica i dati');
+    stepsBox.replaceChildren(form);
+    return { toggle };
   }
 
   // ---------------- avvio ----------------
